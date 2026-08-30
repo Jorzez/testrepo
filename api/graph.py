@@ -6,20 +6,43 @@ driver = GraphDatabase.driver(
     auth=(os.getenv("NEO4J_USER", "neo4j"), os.getenv("NEO4J_PASSWORD", "password123")),
 )
 
+# Запреты нарушены, если атрибут ПРИСУТСТВУЕТ в цели
 FIND_PROHIBITIONS = """
 MATCH (o:Order {status:'active'})-[:CONTAINS]->(c:Clause)
-      -[:DEFINES]->(r:Rule {rule_type:'PROHIBITION'})
-      -[:APPLIES_TO]->(a:GoalAttribute)
-WHERE a.name IN $attributes
-OPTIONAL MATCH (r)-[:HAS_EXAMPLE]->(e:Example)
-OPTIONAL MATCH (r)-[:REQUIRES]->(req:Requirement)
-RETURN o.order_id AS order_id, c.number AS clause_number, c.text AS clause_text,
-       r.rule_id AS rule_id, r.text AS rule_text,
-       collect(DISTINCT e.text) AS examples,
-       collect(DISTINCT req.text) AS requirements
+      -[:DEFINES]->(r:Rule {type:'PROHIBITION'})
+      -[:APPLIES_TO]->(t:CheckTarget)
+WHERE t.name IN $attributes
+OPTIONAL MATCH (r)-[:HAS_EXAMPLE]->(e:ViolationExample {isViolation: true})
+RETURN o.number            AS order_number,
+       c.code              AS clause_code,
+       c.text              AS clause_text,
+       r.ruleId            AS rule_id,
+       r.description       AS rule_text,
+       r.checkInstruction  AS check_instruction,
+       'PROHIBITION'       AS violation_type,
+       t.name              AS attribute,
+       collect(DISTINCT e.text) AS violation_examples
 """
 
-ALL_ATTRIBUTES = "MATCH (a:GoalAttribute) RETURN a.name AS name"
+# Требования нарушены, если атрибут ОТСУТСТВУЕТ в цели
+FIND_MISSING_REQUIREMENTS = """
+MATCH (o:Order {status:'active'})-[:CONTAINS]->(c:Clause)
+      -[:DEFINES]->(r:Rule {type:'REQUIREMENT'})
+      -[:APPLIES_TO]->(t:CheckTarget)
+WHERE NOT t.name IN $attributes
+OPTIONAL MATCH (r)-[:HAS_EXAMPLE]->(e:ViolationExample {isViolation: false})
+RETURN o.number            AS order_number,
+       c.code              AS clause_code,
+       c.text              AS clause_text,
+       r.ruleId            AS rule_id,
+       r.description       AS rule_text,
+       r.checkInstruction  AS check_instruction,
+       'MISSING_REQUIREMENT' AS violation_type,
+       t.name              AS attribute,
+       collect(DISTINCT e.text) AS correct_examples
+"""
+
+ALL_ATTRIBUTES = "MATCH (t:CheckTarget) RETURN t.name AS name"
 
 
 def get_all_attributes() -> list[str]:
@@ -27,6 +50,9 @@ def get_all_attributes() -> list[str]:
         return [rec["name"] for rec in s.run(ALL_ATTRIBUTES)]
 
 
-def find_prohibitions(attributes: list[str]) -> list[dict]:
+def find_violations(attributes: list[str]) -> list[dict]:
+    """Все нарушения: сработавшие запреты + невыполненные требования."""
     with driver.session() as s:
-        return [dict(rec) for rec in s.run(FIND_PROHIBITIONS, attributes=attributes)]
+        prohibitions = [dict(r) for r in s.run(FIND_PROHIBITIONS, attributes=attributes)]
+        missing = [dict(r) for r in s.run(FIND_MISSING_REQUIREMENTS, attributes=attributes)]
+    return prohibitions + missing
