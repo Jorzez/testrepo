@@ -1,0 +1,6 @@
+fastapi==0.115.*
+uvicorn[standard]==0.34.*
+neo4j==5.28.*
+openai==1.*          
+pydantic==2.*
+python-dotenv==1.*

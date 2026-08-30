@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="https://unpkg.com/neovis.js@2.1.0"></script>
+  <style>#viz { width: 100vw; height: 95vh; }</style>
+</head>
+<body>
+<div id="viz"></div>
+<script>
+  const viz = new NeoVis.default({
+    containerId: "viz",
+    neo4j: {
+      serverUrl: "bolt://localhost:7687",
+      serverUser: "neo4j",
+      serverPassword: "password123"
+    },
+    labels: {
+      Order:  { label: "title" },
+      Clause: { label: "number" },
+      Rule:   { label: "rule_id" },
+      GoalAttribute: { label: "name" },
+      Requirement:   { label: "text" },
+      Example:       { label: "example_id" }
+    },
+    relationships: {
+      CONTAINS: {}, DEFINES: {}, REQUIRES: {},
+      APPLIES_TO: {}, HAS_EXAMPLE: {}, REFERENCES: {}
+    },
+    initialCypher: "MATCH (n)-[r]->(m) RETURN n,r,m LIMIT 300"
+  });
+  viz.render();
+</script>
+</body>
+</html>
