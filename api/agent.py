@@ -9,12 +9,20 @@
 Режим отказа — fail-closed: если извлечение атрибутов не удалось
 (модель недоступна, вернула мусор), цель НЕ считается разрешённой,
 а помечается как требующая ручной проверки.
+
+Сопоставление имён атрибутов нечувствительно к пробелам, дефисам,
+регистру и букве «ё»: расхождение в написании между ответом модели и
+графом («срок исполнения» против «срок_исполнения») не должно
+превращаться в ложное нарушение. О таких расхождениях и об атрибутах,
+которых нет в графе, сообщается в поле notes.
 """
 
 import json
 import logging
 import os
 import re
+from collections import defaultdict
+from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from openai import OpenAI
@@ -39,6 +47,14 @@ class ExtractionError(RuntimeError):
     """Не удалось получить от модели список атрибутов."""
 
 
+@dataclass
+class Extraction:
+    """Результат извлечения атрибутов из цели."""
+
+    attributes: list[str]
+    warnings: list[str] = field(default_factory=list)
+
+
 def get_client() -> OpenAI:
     """Ленивая инициализация клиента vLLM (OpenAI-совместимый API)."""
     global _client
@@ -61,30 +77,73 @@ EXTRACT_PROMPT = """Ты — классификатор формулировок
 {attrs}
 
 Определи, какие из перечисленных атрибутов присутствуют в цели пользователя.
-Используй ТОЛЬКО имена атрибутов из списка выше, не придумывай новые.
-Если ни один атрибут не присутствует, верни пустой список.
+Копируй имена атрибутов из списка выше буква в букву, не придумывай новые
+и не меняй написание. Если ни один атрибут не присутствует, верни пустой список.
 
 Ответь строго JSON-объектом вида {{"attributes": ["имя_атрибута"]}} без пояснений.
 
 Цель: {goal}"""
 
 
+# --------------------------------------------------------------------------
+#  Нормализация имён атрибутов
+# --------------------------------------------------------------------------
+
+
+def normalize_name(name: str) -> str:
+    """Каноническая форма имени атрибута для сопоставления.
+
+    «Срок исполнения», «срок-исполнения» и «срок_исполнения» дают один ключ.
+    """
+    text = str(name).replace(" ", " ").strip().lower().replace("ё", "е")
+    text = re.sub(r"[\s\-]+", "_", text)
+    text = re.sub(r"_+", "_", text)
+    return text.strip("_")
+
+
+def index_targets(targets: list[dict[str, str]]) -> dict[str, list[str]]:
+    """Индекс «нормализованное имя -> все написания этого атрибута в графе».
+
+    Список значений длиннее одного означает дубликаты в графе: разные узлы
+    :CheckTarget, означающие одно и то же. Правила могут висеть на разных
+    из них, поэтому при совпадении засчитываются все написания сразу.
+    """
+    index: dict[str, list[str]] = defaultdict(list)
+    for target in targets:
+        index[normalize_name(target["name"])].append(target["name"])
+    return dict(index)
+
+
 def build_prompt(goal: str, targets: list[dict[str, str]]) -> str:
-    """Собирает промпт извлечения из словаря атрибутов графа."""
-    lines = [
-        f'- "{t["name"]}" — {t["description"]}' if t.get("description") else f'- "{t["name"]}"'
-        for t in targets
-    ]
+    """Собирает промпт извлечения из словаря атрибутов графа.
+
+    Дубликаты по нормализованному имени в промпт попадают один раз:
+    два почти одинаковых варианта сбивают модель с толку.
+    """
+    lines: list[str] = []
+    seen: set[str] = set()
+    for target in targets:
+        key = normalize_name(target["name"])
+        if key in seen:
+            continue
+        seen.add(key)
+        description = (target.get("description") or "").strip()
+        lines.append(
+            f'- "{target["name"]}" — {description}' if description else f'- "{target["name"]}"'
+        )
     return EXTRACT_PROMPT.format(attrs="\n".join(lines), goal=goal)
+
+
+# --------------------------------------------------------------------------
+#  Разбор ответа модели
+# --------------------------------------------------------------------------
 
 
 def _strip_reasoning(text: str) -> str:
     """Убирает блоки рассуждений и markdown-обёртки вокруг JSON."""
-    # Полные и незакрытые блоки <think>...</think> (Qwen3 и подобные)
     text = re.sub(r"<think\b[^>]*>.*?</think\s*>", "", text, flags=re.DOTALL | re.IGNORECASE)
     text = re.sub(r"<think\b[^>]*>.*\Z", "", text, flags=re.DOTALL | re.IGNORECASE)
     text = re.sub(r"</?think\s*>", "", text, flags=re.IGNORECASE)
-    # Ограждения ```json ... ```
     text = re.sub(r"```(?:json)?\s*", "", text, flags=re.IGNORECASE)
     text = text.replace("```", "")
     return text.strip()
@@ -138,12 +197,41 @@ def parse_attributes_json(text: str) -> dict[str, Any]:
     return data
 
 
-def extract_attributes(goal: str, targets: list[dict[str, str]]) -> list[str]:
+def resolve_attributes(
+    raw_attributes: list[Any], targets: list[dict[str, str]]
+) -> Extraction:
+    """Сопоставляет ответ модели со словарём графа с учётом написания."""
+    index = index_targets(targets)
+    resolved: list[str] = []
+    warnings: list[str] = []
+
+    for item in raw_attributes:
+        if not isinstance(item, str):
+            warnings.append(f"Модель вернула атрибут не-строку и он отброшен: {item!r}")
+            continue
+        variants = index.get(normalize_name(item))
+        if not variants:
+            warnings.append(
+                f'Атрибута "{item}" нет в словаре графа (:CheckTarget), он отброшен'
+            )
+            log.warning("Неизвестный атрибут от модели: %r", item)
+            continue
+        if item not in variants:
+            # Написание разошлось, но атрибут узнан — это не повод
+            # засчитывать требование невыполненным.
+            log.info("Атрибут %r сопоставлен с %r по нормализованному имени", item, variants)
+        for name in variants:
+            if name not in resolved:
+                resolved.append(name)
+
+    return Extraction(attributes=resolved, warnings=warnings)
+
+
+def extract_attributes(goal: str, targets: list[dict[str, str]]) -> Extraction:
     """Определяет присутствующие в цели атрибуты. Бросает ExtractionError при сбое."""
-    allowed = {t["name"] for t in targets}
-    if not allowed:
+    if not targets:
         raise ExtractionError(
-            "словарь атрибутов (:CheckTarget) пуст — база не заполнена, "
+            "словарь атрибутов (:CheckTarget) пуст — граф не заполнен, "
             "запустите сервис seeder"
         )
 
@@ -167,11 +255,7 @@ def extract_attributes(goal: str, targets: list[dict[str, str]]) -> list[str]:
         log.warning("Модель вернула attributes неверного типа: %r", raw_attributes)
         raise ExtractionError("поле attributes отсутствует или не является списком")
 
-    known = [a for a in raw_attributes if isinstance(a, str) and a in allowed]
-    unknown = [a for a in raw_attributes if a not in allowed]
-    if unknown:
-        log.warning("Модель вернула неизвестные атрибуты, они отброшены: %r", unknown)
-    return known
+    return resolve_attributes(raw_attributes, targets)
 
 
 def check_goal(goal: str) -> dict[str, Any]:
@@ -179,7 +263,7 @@ def check_goal(goal: str) -> dict[str, Any]:
     targets = get_check_targets()
 
     try:
-        attributes = extract_attributes(goal, targets)
+        extraction = extract_attributes(goal, targets)
     except ExtractionError as exc:
         # fail-closed: не подтверждаем соответствие, если не смогли разобрать цель
         log.error("Извлечение атрибутов не удалось: %s", exc)
@@ -196,12 +280,25 @@ def check_goal(goal: str) -> dict[str, Any]:
             ],
         }
 
-    violations = find_violations(attributes)
+    violations = find_violations(extraction.attributes)
+
+    notes = list(extraction.warnings)
+    duplicates = {k: v for k, v in index_targets(targets).items() if len(v) > 1}
+    if duplicates:
+        # Дубликаты означают, что часть правил висит на «двойниках»
+        # и результат проверки может быть неполным.
+        for variants in duplicates.values():
+            notes.append(
+                "В графе есть дубликаты атрибута, различающиеся написанием: "
+                + ", ".join(f'"{v}"' for v in variants)
+                + ". Их нужно свести к одному узлу :CheckTarget."
+            )
+
     return {
         "goal": goal,
         "status": STATUS_ALLOWED if not violations else STATUS_VIOLATIONS,
         "allowed": not violations,
-        "detected_attributes": attributes,
+        "detected_attributes": extraction.attributes,
         "violations": violations,
-        "notes": [],
+        "notes": notes,
     }

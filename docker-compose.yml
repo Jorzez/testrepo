@@ -81,6 +81,9 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     ports:
       - "8080:8080"
+    volumes:
+      # Смонтировано на запись, чтобы export_graph.py мог записать seed.cypher.
+      - ./neo4j/init:/init
     depends_on:
       neo4j:
         condition: service_healthy

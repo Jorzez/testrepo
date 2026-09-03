@@ -111,6 +111,41 @@ RETURN n, r, m
 LIMIT $limit
 """
 
+# --- Диагностика целостности словаря атрибутов ---------------------------
+# Уникальность CheckTarget.name не спасает от «срок исполнения» и
+# «срок_исполнения» — для базы это разные строки. Такие двойники приводят
+# к ложным нарушениям, поэтому их надо видеть явно, а не по симптомам.
+
+DUPLICATE_CHECK_TARGETS = """
+MATCH (t:CheckTarget)
+WITH toLower(replace(replace(trim(t.name), ' ', '_'), '-', '_')) AS norm,
+     collect(t.name) AS variants
+WHERE size(variants) > 1
+RETURN norm, variants
+ORDER BY norm
+"""
+
+CHECK_TARGETS_WITHOUT_DESCRIPTION = """
+MATCH (t:CheckTarget)
+WHERE t.description IS NULL OR trim(t.description) = ''
+RETURN t.name AS name
+ORDER BY name
+"""
+
+ORPHAN_CHECK_TARGETS = """
+MATCH (t:CheckTarget)
+WHERE NOT (:Rule)-[:APPLIES_TO]->(t)
+RETURN t.name AS name
+ORDER BY name
+"""
+
+RULES_WITHOUT_TARGET = """
+MATCH (r:Rule)
+WHERE NOT (r)-[:APPLIES_TO]->(:CheckTarget)
+RETURN r.ruleId AS rule_id
+ORDER BY rule_id
+"""
+
 
 # --------------------------------------------------------------------------
 #  Публичный API модуля
@@ -148,3 +183,43 @@ def find_violations(attributes: list[str]) -> list[dict[str, Any]]:
         len(missing),
     )
     return prohibitions + missing
+
+
+def diagnose() -> dict[str, Any]:
+    """Проверка целостности словаря атрибутов и правил.
+
+    Возвращает найденные проблемы: дубликаты написаний, атрибуты без
+    описания (модель не получит по ним критерия и будет их пропускать),
+    атрибуты без правил и правила без атрибутов.
+    """
+    with get_driver().session() as session:
+        duplicates = [dict(r) for r in session.run(DUPLICATE_CHECK_TARGETS)]
+        no_description = [r["name"] for r in session.run(CHECK_TARGETS_WITHOUT_DESCRIPTION)]
+        orphan_targets = [r["name"] for r in session.run(ORPHAN_CHECK_TARGETS)]
+        rules_without_target = [r["rule_id"] for r in session.run(RULES_WITHOUT_TARGET)]
+
+    problems: list[str] = []
+    for row in duplicates:
+        problems.append(
+            "Дубликаты атрибута, различающиеся написанием: "
+            + ", ".join(f'"{v}"' for v in row["variants"])
+        )
+    if no_description:
+        problems.append(
+            "Атрибуты без описания (промпт останется без критерия, модель будет "
+            "их пропускать): " + ", ".join(no_description)
+        )
+    if orphan_targets:
+        problems.append("Атрибуты, к которым не привязано ни одного правила: "
+                        + ", ".join(orphan_targets))
+    if rules_without_target:
+        problems.append("Правила без привязки к атрибуту (никогда не сработают): "
+                        + ", ".join(rules_without_target))
+
+    return {
+        "duplicate_check_targets": duplicates,
+        "check_targets_without_description": no_description,
+        "orphan_check_targets": orphan_targets,
+        "rules_without_target": rules_without_target,
+        "problems": problems,
+    }

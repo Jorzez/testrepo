@@ -70,21 +70,37 @@ def health():
 
 @app.get("/ready")
 def ready():
-    """Readiness: зависимости доступны и база заполнена."""
+    """Readiness: зависимости доступны, граф заполнен и внутренне непротиворечив.
+
+    Дубликаты написаний атрибутов и атрибуты без описания делают проверку
+    целей молча неполной, поэтому это тоже «не готов», а не предупреждение.
+    """
     neo4j_ok = graph.verify_connectivity()
     targets = 0
+    problems: list[str] = []
+    diagnostics: dict = {}
+
     if neo4j_ok:
         try:
             targets = len(graph.get_check_targets())
+            diagnostics = graph.diagnose()
+            problems = diagnostics["problems"]
         except Exception as exc:  # noqa: BLE001
             log.warning("Не удалось прочитать словарь атрибутов: %s", exc)
             neo4j_ok = False
 
+    if not targets:
+        problems = ["Словарь атрибутов (:CheckTarget) пуст — граф не заполнен"] + problems
+
+    ready_now = neo4j_ok and bool(targets) and not problems
     payload = {
-        "status": "ready" if neo4j_ok and targets else "not_ready",
+        "status": "ready" if ready_now else "not_ready",
         "neo4j": neo4j_ok,
         "check_targets": targets,
+        "problems": problems,
+        "diagnostics": diagnostics,
     }
-    if payload["status"] == "ready":
+    if ready_now:
         return payload
+    log.warning("Граф не готов к проверкам: %s", "; ".join(problems) or "Neo4j недоступен")
     return JSONResponse(status_code=503, content=payload)
