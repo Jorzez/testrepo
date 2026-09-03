@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Граф нормативных требований</title>
+  <script src="https://unpkg.com/neovis.js@2.1.0"></script>
+  <style>
+    html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, -apple-system, sans-serif; }
+    #bar { padding: 8px 12px; background: #f4f4f5; border-bottom: 1px solid #d4d4d8; }
+    #bar b { margin-right: 12px; }
+    #status { color: #71717a; }
+    #viz { width: 100vw; height: calc(100vh - 40px); }
+  </style>
+</head>
+<body>
+<div id="bar">
+  <b>Граф нормативных требований</b>
+  <span id="status">загрузка…</span>
+</div>
+<div id="viz"></div>
+<script>
+  // Метки и свойства соответствуют схеме из neo4j/init/seed.cypher.
+  const viz = new NeoVis.default({
+    containerId: "viz",
+    neo4j: {
+      serverUrl: "bolt://localhost:7687",
+      serverUser: "neo4j",
+      serverPassword: "password123"
+    },
+    labels: {
+      Order:            { label: "title" },
+      Clause:           { label: "code" },
+      Rule:             { label: "ruleId" },
+      CheckTarget:      { label: "name" },
+      ViolationExample: { label: "text" }
+    },
+    relationships: {
+      CONTAINS:   { label: "type" },
+      DEFINES:    { label: "type" },
+      APPLIES_TO: { label: "type" },
+      HAS_EXAMPLE:{ label: "type" },
+      REFERENCES: { label: "type" }
+    },
+    initialCypher: "MATCH (n)-[r]->(m) RETURN n, r, m LIMIT 300"
+  });
+
+  const status = document.getElementById("status");
+  viz.registerOnEvent("completed", () => { status.textContent = "граф загружен"; });
+  viz.registerOnEvent("error", (e) => {
+    status.textContent = "ошибка подключения к Neo4j — проверьте, что база поднята и заполнена";
+    console.error(e);
+  });
+  viz.render();
+</script>
+</body>
+</html>

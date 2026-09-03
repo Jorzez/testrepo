@@ -1,6 +1,7 @@
 services:
   neo4j:
     image: neo4j:5.26
+    restart: unless-stopped
     environment:
       NEO4J_AUTH: neo4j/${NEO4J_PASSWORD}
     ports:
@@ -8,14 +9,38 @@ services:
       - "7687:7687"    # bolt
     volumes:
       - neo4j_data:/data
-      - ./neo4j/init:/init
+      - ./neo4j/init:/init:ro
     healthcheck:
       test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "${NEO4J_PASSWORD}", "RETURN 1"]
       interval: 10s
-      retries: 10
+      timeout: 10s
+      retries: 15
+      start_period: 30s
+
+  # Разовый сервис: заполняет граф из neo4j/init/seed.cypher.
+  # Neo4j 5 не исполняет .cypher из /init сам, поэтому это делает seed.py.
+  # Скрипт идемпотентен, поэтому запускается при каждом подъёме стека.
+  seeder:
+    build: ./api
+    restart: "no"
+    command: ["python", "seed.py"]
+    environment:
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD}
+      SEED_FILE: /init/seed.cypher
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - ./neo4j/init:/init:ro
+    depends_on:
+      neo4j:
+        condition: service_healthy
 
   vllm:
-    image: vllm/vllm-openai:latest
+    # Рекомендуется зафиксировать конкретный тег вместо latest:
+    #   VLLM_IMAGE=vllm/vllm-openai:v0.8.5 docker compose up -d
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:latest}
+    restart: unless-stopped
     environment:
       HUGGING_FACE_HUB_TOKEN: ${HF_TOKEN}
     command: >
@@ -26,6 +51,14 @@ services:
       - "8000:8000"
     volumes:
       - hf_cache:/root/.cache/huggingface
+    healthcheck:
+      # В образе может не быть curl — проверяем средствами Python.
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=5)\""]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      # Загрузка весов 8B-модели занимает минуты, поэтому длинный start_period.
+      start_period: 900s
     deploy:
       resources:
         reservations:
@@ -36,20 +69,29 @@ services:
 
   api:
     build: ./api
+    restart: unless-stopped
     environment:
       NEO4J_URI: bolt://neo4j:7687
       NEO4J_USER: neo4j
       NEO4J_PASSWORD: ${NEO4J_PASSWORD}
       VLLM_URL: http://vllm:8000/v1
       VLLM_MODEL: ${VLLM_MODEL}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-60}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
     ports:
       - "8080:8080"
     depends_on:
       neo4j:
         condition: service_healthy
+      seeder:
+        condition: service_completed_successfully
+      vllm:
+        condition: service_healthy
 
   web:
-    image: nginx:alpine
+    image: nginx:1.27-alpine
+    restart: unless-stopped
     volumes:
       - ./web:/usr/share/nginx/html:ro
     ports:
