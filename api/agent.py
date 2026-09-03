@@ -28,6 +28,7 @@ from typing import Any, Optional
 from openai import OpenAI
 
 from graph import find_violations, get_check_targets
+from naming import normalize_name
 
 log = logging.getLogger(__name__)
 
@@ -86,19 +87,8 @@ EXTRACT_PROMPT = """Ты — классификатор формулировок
 
 
 # --------------------------------------------------------------------------
-#  Нормализация имён атрибутов
+#  Сопоставление имён атрибутов (normalize_name — из naming.py)
 # --------------------------------------------------------------------------
-
-
-def normalize_name(name: str) -> str:
-    """Каноническая форма имени атрибута для сопоставления.
-
-    «Срок исполнения», «срок-исполнения» и «срок_исполнения» дают один ключ.
-    """
-    text = str(name).replace(" ", " ").strip().lower().replace("ё", "е")
-    text = re.sub(r"[\s\-]+", "_", text)
-    text = re.sub(r"_+", "_", text)
-    return text.strip("_")
 
 
 def index_targets(targets: list[dict[str, str]]) -> dict[str, list[str]]:

@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 import graph
 from agent import check_goal
+from routes import router as catalog_router
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO").upper(),
@@ -41,9 +42,12 @@ app.add_middleware(
         for o in os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
         if o.strip()
     ],
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE"],
     allow_headers=["*"],
 )
+
+# CRUD над приказами, пунктами, правилами, атрибутами и примерами.
+app.include_router(catalog_router)
 
 
 class GoalRequest(BaseModel):

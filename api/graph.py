@@ -57,19 +57,30 @@ def verify_connectivity() -> bool:
 
 # Словарь проверяемых атрибутов. description идёт в промпт агента,
 # поэтому единственный источник истины по атрибутам — граф, а не код.
-ALL_CHECK_TARGETS = """
+# Архивирование — мягкое удаление: узел остаётся в графе, но выпадает из
+# проверок. coalesce нужен для узлов, заведённых до появления status.
+ACTIVE = "coalesce({0}.status, 'active') = 'active'"
+
+ALL_CHECK_TARGETS = f"""
 MATCH (t:CheckTarget)
+WHERE {ACTIVE.format('t')}
 RETURN t.name AS name, coalesce(t.description, '') AS description
 ORDER BY name
 """
 
 # Запрет нарушен, если атрибут ПРИСУТСТВУЕТ в цели.
-FIND_PROHIBITIONS = """
-MATCH (o:Order {status: 'active'})-[:CONTAINS]->(c:Clause)
-      -[:DEFINES]->(r:Rule {type: 'PROHIBITION'})
+FIND_PROHIBITIONS = f"""
+MATCH (o:Order)-[:CONTAINS]->(c:Clause)
+      -[:DEFINES]->(r:Rule)
       -[:APPLIES_TO]->(t:CheckTarget)
-WHERE t.name IN $attributes
-OPTIONAL MATCH (r)-[:HAS_EXAMPLE]->(e:ViolationExample {isViolation: true})
+WHERE r.type = 'PROHIBITION'
+  AND t.name IN $attributes
+  AND {ACTIVE.format('o')}
+  AND {ACTIVE.format('c')}
+  AND {ACTIVE.format('r')}
+  AND {ACTIVE.format('t')}
+OPTIONAL MATCH (r)-[:HAS_EXAMPLE]->(e:ViolationExample {{isViolation: true}})
+WHERE {ACTIVE.format('e')}
 RETURN o.number             AS order_number,
        o.title              AS order_title,
        c.code               AS clause_code,
@@ -85,12 +96,18 @@ ORDER BY order_number, clause_code, rule_id, attribute
 """
 
 # Требование нарушено, если атрибут ОТСУТСТВУЕТ в цели.
-FIND_MISSING_REQUIREMENTS = """
-MATCH (o:Order {status: 'active'})-[:CONTAINS]->(c:Clause)
-      -[:DEFINES]->(r:Rule {type: 'REQUIREMENT'})
+FIND_MISSING_REQUIREMENTS = f"""
+MATCH (o:Order)-[:CONTAINS]->(c:Clause)
+      -[:DEFINES]->(r:Rule)
       -[:APPLIES_TO]->(t:CheckTarget)
-WHERE NOT t.name IN $attributes
-OPTIONAL MATCH (r)-[:HAS_EXAMPLE]->(e:ViolationExample {isViolation: false})
+WHERE r.type = 'REQUIREMENT'
+  AND NOT t.name IN $attributes
+  AND {ACTIVE.format('o')}
+  AND {ACTIVE.format('c')}
+  AND {ACTIVE.format('r')}
+  AND {ACTIVE.format('t')}
+OPTIONAL MATCH (r)-[:HAS_EXAMPLE]->(e:ViolationExample {{isViolation: false}})
+WHERE {ACTIVE.format('e')}
 RETURN o.number             AS order_number,
        o.title              AS order_title,
        c.code               AS clause_code,
@@ -116,8 +133,9 @@ LIMIT $limit
 # «срок_исполнения» — для базы это разные строки. Такие двойники приводят
 # к ложным нарушениям, поэтому их надо видеть явно, а не по симптомам.
 
-DUPLICATE_CHECK_TARGETS = """
+DUPLICATE_CHECK_TARGETS = f"""
 MATCH (t:CheckTarget)
+WHERE {ACTIVE.format('t')}
 WITH toLower(replace(replace(trim(t.name), ' ', '_'), '-', '_')) AS norm,
      collect(t.name) AS variants
 WHERE size(variants) > 1
@@ -125,23 +143,26 @@ RETURN norm, variants
 ORDER BY norm
 """
 
-CHECK_TARGETS_WITHOUT_DESCRIPTION = """
+CHECK_TARGETS_WITHOUT_DESCRIPTION = f"""
 MATCH (t:CheckTarget)
-WHERE t.description IS NULL OR trim(t.description) = ''
+WHERE {ACTIVE.format('t')}
+  AND (t.description IS NULL OR trim(t.description) = '')
 RETURN t.name AS name
 ORDER BY name
 """
 
-ORPHAN_CHECK_TARGETS = """
+ORPHAN_CHECK_TARGETS = f"""
 MATCH (t:CheckTarget)
-WHERE NOT (:Rule)-[:APPLIES_TO]->(t)
+WHERE {ACTIVE.format('t')}
+  AND NOT (:Rule)-[:APPLIES_TO]->(t)
 RETURN t.name AS name
 ORDER BY name
 """
 
-RULES_WITHOUT_TARGET = """
+RULES_WITHOUT_TARGET = f"""
 MATCH (r:Rule)
-WHERE NOT (r)-[:APPLIES_TO]->(:CheckTarget)
+WHERE {ACTIVE.format('r')}
+  AND NOT (r)-[:APPLIES_TO]->(:CheckTarget)
 RETURN r.ruleId AS rule_id
 ORDER BY rule_id
 """

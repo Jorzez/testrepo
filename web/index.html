@@ -1,57 +1,937 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Граф нормативных требований</title>
-  <script src="https://unpkg.com/neovis.js@2.1.0"></script>
-  <style>
-    html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, -apple-system, sans-serif; }
-    #bar { padding: 8px 12px; background: #f4f4f5; border-bottom: 1px solid #d4d4d8; }
-    #bar b { margin-right: 12px; }
-    #status { color: #71717a; }
-    #viz { width: 100vw; height: calc(100vh - 40px); }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Каталог нормативных требований</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%233d5afe'/%3E%3Cpath d='M9 10h14M9 16h14M9 22h9' stroke='white' stroke-width='2.6' stroke-linecap='round'/%3E%3C/svg%3E">
+<style>
+:root{
+  --bg:#f6f7f9; --panel:#ffffff; --panel-2:#fbfcfd; --line:#e3e6ea; --line-soft:#eef0f3;
+  --ink:#16181d; --ink-2:#5b6472; --ink-3:#8a93a1;
+  --accent:#3d5afe; --accent-ink:#ffffff; --accent-soft:#eaeeff;
+  --ok:#1a7f4b; --ok-soft:#e6f5ec;
+  --warn:#9a6400; --warn-soft:#fdf3e0;
+  --danger:#c0342b; --danger-soft:#fdecea;
+  --shadow:0 1px 2px rgba(16,20,28,.06), 0 8px 24px rgba(16,20,28,.06);
+  --radius:10px;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0f1216; --panel:#171b21; --panel-2:#1c2128; --line:#2a313a; --line-soft:#232931;
+    --ink:#e8ebef; --ink-2:#a3adba; --ink-3:#727d8b;
+    --accent:#7c8cff; --accent-ink:#0f1216; --accent-soft:#232a44;
+    --ok:#5fd398; --ok-soft:#16301f;
+    --warn:#e8b465; --warn-soft:#332614;
+    --danger:#ff8f85; --danger-soft:#3a1d1a;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;}
+button,input,textarea,select{font:inherit;color:inherit}
+
+/* ---------- каркас ---------- */
+header{position:sticky;top:0;z-index:20;background:var(--panel);border-bottom:1px solid var(--line)}
+.head-row{max-width:1180px;margin:0 auto;padding:14px 20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.brand{font-weight:650;letter-spacing:-.01em;font-size:16px;margin-right:auto}
+.brand small{display:block;font-weight:400;font-size:12px;color:var(--ink-3);letter-spacing:0}
+nav{max-width:1180px;margin:0 auto;padding:0 20px;display:flex;gap:2px;overflow-x:auto}
+nav button{background:none;border:0;padding:10px 14px;cursor:pointer;color:var(--ink-2);
+  border-bottom:2px solid transparent;white-space:nowrap;border-radius:6px 6px 0 0}
+nav button:hover{color:var(--ink);background:var(--panel-2)}
+nav button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--accent);font-weight:550}
+main{max-width:1180px;margin:0 auto;padding:22px 20px 80px}
+.toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:18px}
+.grow{flex:1 1 220px}
+
+/* ---------- элементы ---------- */
+.btn{border:1px solid var(--line);background:var(--panel);padding:7px 13px;border-radius:8px;
+  cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:.12s}
+.btn:hover{background:var(--panel-2);border-color:var(--ink-3)}
+.btn:active{transform:translateY(1px)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:550}
+.btn.primary:hover{filter:brightness(1.08)}
+.btn.danger{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 40%,var(--line))}
+.btn.danger:hover{background:var(--danger-soft)}
+.btn.sm{padding:4px 9px;font-size:13px;border-radius:7px}
+.btn.ghost{border-color:transparent;background:none;color:var(--ink-2)}
+.btn.ghost:hover{background:var(--panel-2);color:var(--ink)}
+.btn[disabled]{opacity:.5;cursor:not-allowed}
+input[type=text],input[type=date],textarea,select{width:100%;padding:8px 11px;border:1px solid var(--line);
+  border-radius:8px;background:var(--panel)}
+input:focus,textarea:focus,select:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
+textarea{resize:vertical;min-height:78px;line-height:1.5}
+label.check{display:inline-flex;align-items:center;gap:7px;cursor:pointer;color:var(--ink-2);white-space:nowrap}
+.badge{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:999px;
+  font-size:12px;font-weight:550;border:1px solid transparent;white-space:nowrap}
+.badge.prohibition{background:var(--danger-soft);color:var(--danger)}
+.badge.requirement{background:var(--accent-soft);color:var(--accent)}
+.badge.archived{background:var(--panel-2);color:var(--ink-3);border-color:var(--line)}
+.badge.warn{background:var(--warn-soft);color:var(--warn)}
+.badge.ok{background:var(--ok-soft);color:var(--ok)}
+.chip{display:inline-flex;padding:2px 9px;border-radius:999px;background:var(--panel-2);
+  border:1px solid var(--line);font-size:12.5px;color:var(--ink-2)}
+.muted{color:var(--ink-2)}
+.dim{color:var(--ink-3);font-size:13px}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px}
+
+/* ---------- карточки каталога ---------- */
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+  margin-bottom:12px;box-shadow:var(--shadow);overflow:hidden}
+.card.is-archived{opacity:.62}
+.order-head{display:flex;gap:12px;align-items:flex-start;padding:14px 16px;cursor:pointer}
+.order-head:hover{background:var(--panel-2)}
+.caret{flex:none;width:18px;color:var(--ink-3);transition:transform .15s;margin-top:2px}
+.caret.open{transform:rotate(90deg)}
+.order-title{flex:1;min-width:0}
+.order-title b{font-size:15.5px}
+.order-title .sub{color:var(--ink-2);font-size:13.5px;margin-top:2px}
+.actions{display:flex;gap:4px;flex:none;flex-wrap:wrap}
+.body{border-top:1px solid var(--line-soft);padding:6px 16px 14px 40px;background:var(--panel-2)}
+.clause{border-left:2px solid var(--line);padding:11px 0 11px 14px;margin-top:10px}
+.clause.is-archived{opacity:.62}
+.row{display:flex;gap:10px;align-items:flex-start}
+.row .grow{min-width:0}
+.rule{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:11px 12px;margin-top:9px}
+.rule.is-archived{opacity:.62}
+.rule-meta{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px}
+.targets{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;align-items:center}
+.examples{margin-top:9px;border-top:1px dashed var(--line);padding-top:8px}
+.example{display:flex;gap:8px;align-items:flex-start;padding:3px 0;font-size:13.5px}
+.example .mark{flex:none;font-weight:700;width:16px;text-align:center}
+.example.bad .mark{color:var(--danger)}
+.example.good .mark{color:var(--ok)}
+.empty{padding:40px 20px;text-align:center;color:var(--ink-3);border:1px dashed var(--line);border-radius:var(--radius)}
+
+/* ---------- таблица ---------- */
+table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line);
+  border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow)}
+th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line-soft);vertical-align:top}
+th{background:var(--panel-2);font-size:12.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-2)}
+tr:last-child td{border-bottom:0}
+tr.is-archived{opacity:.6}
+
+/* ---------- модалка ---------- */
+.overlay{position:fixed;inset:0;background:rgba(10,13,18,.5);backdrop-filter:blur(2px);
+  display:flex;align-items:center;justify-content:center;padding:20px;z-index:50}
+.modal{background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);
+  width:min(600px,100%);max-height:88vh;display:flex;flex-direction:column}
+.modal h3{margin:0;padding:16px 20px;border-bottom:1px solid var(--line);font-size:16px}
+.modal .content{padding:16px 20px;overflow:auto}
+.modal .foot{padding:14px 20px;border-top:1px solid var(--line);display:flex;gap:9px;justify-content:flex-end}
+.field{margin-bottom:14px}
+.field > label{display:block;margin-bottom:5px;font-size:13.5px;font-weight:550}
+.field .hint{margin-top:5px;font-size:12.5px;color:var(--ink-3)}
+.optlist{border:1px solid var(--line);border-radius:8px;max-height:190px;overflow:auto;padding:4px}
+.optlist label{display:flex;gap:9px;align-items:flex-start;padding:6px 8px;border-radius:6px;cursor:pointer}
+.optlist label:hover{background:var(--panel-2)}
+.optlist input{margin-top:3px;flex:none}
+.optlist .d{color:var(--ink-3);font-size:12.5px}
+
+/* ---------- тосты ---------- */
+#toasts{position:fixed;right:18px;bottom:18px;z-index:80;display:flex;flex-direction:column;gap:9px;max-width:400px}
+.toast{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--accent);
+  border-radius:9px;padding:11px 14px;box-shadow:var(--shadow);animation:slide .18s ease-out}
+.toast.err{border-left-color:var(--danger)}
+.toast.ok{border-left-color:var(--ok)}
+@keyframes slide{from{opacity:0;transform:translateY(8px)}}
+
+/* ---------- проверка и диагностика ---------- */
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+  padding:18px;box-shadow:var(--shadow)}
+.violation{border:1px solid var(--line);border-left:3px solid var(--danger);border-radius:9px;
+  padding:12px 14px;margin-top:11px;background:var(--panel-2)}
+.problem{display:flex;gap:10px;padding:10px 0;border-bottom:1px solid var(--line-soft)}
+.problem:last-child{border-bottom:0}
+.spinner{width:15px;height:15px;border:2px solid var(--line);border-top-color:var(--accent);
+  border-radius:50%;animation:spin .7s linear infinite;display:inline-block}
+@keyframes spin{to{transform:rotate(360deg)}}
+.hidden{display:none !important}
+</style>
 </head>
 <body>
-<div id="bar">
-  <b>Граф нормативных требований</b>
-  <span id="status">загрузка…</span>
-</div>
-<div id="viz"></div>
-<script>
-  // Метки и свойства соответствуют схеме из neo4j/init/seed.cypher.
-  const viz = new NeoVis.default({
-    containerId: "viz",
-    neo4j: {
-      serverUrl: "bolt://localhost:7687",
-      serverUser: "neo4j",
-      serverPassword: "password123"
-    },
-    labels: {
-      Order:            { label: "title" },
-      Clause:           { label: "code" },
-      Rule:             { label: "ruleId" },
-      CheckTarget:      { label: "name" },
-      ViolationExample: { label: "text" }
-    },
-    relationships: {
-      CONTAINS:   { label: "type" },
-      DEFINES:    { label: "type" },
-      APPLIES_TO: { label: "type" },
-      HAS_EXAMPLE:{ label: "type" },
-      REFERENCES: { label: "type" }
-    },
-    initialCypher: "MATCH (n)-[r]->(m) RETURN n, r, m LIMIT 300"
-  });
 
-  const status = document.getElementById("status");
-  viz.registerOnEvent("completed", () => { status.textContent = "граф загружен"; });
-  viz.registerOnEvent("error", (e) => {
-    status.textContent = "ошибка подключения к Neo4j — проверьте, что база поднята и заполнена";
-    console.error(e);
+<header>
+  <div class="head-row">
+    <div class="brand">Каталог нормативных требований<small id="apiLabel"></small></div>
+    <span id="apiStatus" class="badge archived">подключение…</span>
+    <button class="btn sm" id="reloadBtn">Обновить</button>
+  </div>
+  <nav role="tablist">
+    <button role="tab" data-tab="catalog" aria-selected="true">Приказы и пункты</button>
+    <button role="tab" data-tab="targets" aria-selected="false">Атрибуты</button>
+    <button role="tab" data-tab="check" aria-selected="false">Проверка цели</button>
+    <button role="tab" data-tab="health" aria-selected="false">Диагностика</button>
+  </nav>
+</header>
+
+<main>
+  <section id="tab-catalog">
+    <div class="toolbar">
+      <input type="text" id="search" class="grow" placeholder="Поиск по номеру, заголовку, тексту пункта или правила…">
+      <label class="check"><input type="checkbox" id="showArchived"> Показывать архив</label>
+      <button class="btn primary" id="addOrder">+ Приказ</button>
+    </div>
+    <div id="tree"></div>
+  </section>
+
+  <section id="tab-targets" class="hidden">
+    <div class="toolbar">
+      <div class="grow muted">Атрибут без описания модель системно не распознаёт — правило на нём будет срабатывать всегда.</div>
+      <label class="check"><input type="checkbox" id="showArchivedTargets"> Показывать архив</label>
+      <button class="btn primary" id="addTarget">+ Атрибут</button>
+    </div>
+    <div id="targetsTable"></div>
+  </section>
+
+  <section id="tab-check" class="hidden">
+    <div class="panel">
+      <div class="field">
+        <label for="goalInput">Формулировка цели</label>
+        <textarea id="goalInput" placeholder="Например: снизить долю просроченных заявок до 5% к 31.12.2025 в рамках проекта «Альфа»"></textarea>
+      </div>
+      <button class="btn primary" id="checkBtn">Проверить</button>
+    </div>
+    <div id="checkResult"></div>
+  </section>
+
+  <section id="tab-health" class="hidden">
+    <div class="toolbar">
+      <div class="grow muted">Состояние графа по данным <span class="mono">/ready</span>.</div>
+      <button class="btn" id="healthRefresh">Проверить снова</button>
+    </div>
+    <div id="healthPanel"></div>
+  </section>
+</main>
+
+<div id="toasts"></div>
+<div id="modalRoot"></div>
+
+<script>
+"use strict";
+
+/* Адрес API. По умолчанию тот же хост, порт 8080 — работает и локально,
+   и через SSH-туннель. Переопределяется через ?api=http://host:port */
+const API = new URLSearchParams(location.search).get("api")
+         || `${location.protocol}//${location.hostname}:8080`;
+document.getElementById("apiLabel").textContent = API;
+
+const state = {
+  tab: "catalog",
+  tree: { orders: [] },
+  targets: [],
+  showArchived: false,
+  showArchivedTargets: false,
+  search: "",
+  open: new Set(),
+};
+
+/* ------------------------------ утилиты ---------------------------------- */
+
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const $ = (sel) => document.querySelector(sel);
+
+function toast(message, kind = "") {
+  const el = document.createElement("div");
+  el.className = "toast " + kind;
+  el.textContent = message;
+  $("#toasts").append(el);
+  setTimeout(() => { el.style.opacity = "0"; el.style.transition = ".3s"; }, 4200);
+  setTimeout(() => el.remove(), 4600);
+}
+
+async function api(path, options = {}) {
+  const response = await fetch(API + path, {
+    headers: { "Content-Type": "application/json" },
+    ...options,
+    body: options.body ? JSON.stringify(options.body) : undefined,
   });
-  viz.render();
+  let payload = null;
+  try { payload = await response.json(); } catch { /* пустой ответ */ }
+  if (!response.ok) {
+    const detail = payload && payload.detail;
+    throw new Error(typeof detail === "string" ? detail
+      : Array.isArray(detail) ? detail.map((d) => d.msg || JSON.stringify(d)).join("; ")
+      : `HTTP ${response.status}`);
+  }
+  return payload;
+}
+
+/* ------------------------------ модалки ---------------------------------- */
+
+function closeModal() { $("#modalRoot").innerHTML = ""; }
+
+function renderField(f) {
+  const id = "f_" + f.name;
+  let control;
+  if (f.type === "textarea") {
+    control = `<textarea id="${id}" ${f.required ? "required" : ""}
+      placeholder="${esc(f.placeholder || "")}">${esc(f.value || "")}</textarea>`;
+  } else if (f.type === "select") {
+    control = `<select id="${id}">${f.options.map((o) =>
+      `<option value="${esc(o.value)}" ${o.value === f.value ? "selected" : ""}>${esc(o.label)}</option>`
+    ).join("")}</select>`;
+  } else if (f.type === "checkbox") {
+    return `<div class="field"><label class="check">
+      <input type="checkbox" id="${id}" ${f.value ? "checked" : ""}> ${esc(f.label)}</label>
+      ${f.hint ? `<div class="hint">${esc(f.hint)}</div>` : ""}</div>`;
+  } else if (f.type === "multi") {
+    control = `<div class="optlist" id="${id}">${
+      f.options.length
+        ? f.options.map((o, i) => `<label><input type="checkbox" value="${esc(o.value)}"
+            ${(f.value || []).includes(o.value) ? "checked" : ""}>
+            <span><span class="mono">${esc(o.value)}</span>${
+              o.description ? `<br><span class="d">${esc(o.description)}</span>` : ""
+            }</span></label>`).join("")
+        : `<div class="d" style="padding:10px">Атрибутов пока нет — заведите их на вкладке «Атрибуты».</div>`
+    }</div>`;
+  } else {
+    control = `<input type="${f.type || "text"}" id="${id}" value="${esc(f.value || "")}"
+      placeholder="${esc(f.placeholder || "")}" ${f.required ? "required" : ""}>`;
+  }
+  return `<div class="field"><label for="${id}">${esc(f.label)}</label>${control}
+    ${f.hint ? `<div class="hint">${esc(f.hint)}</div>` : ""}</div>`;
+}
+
+function readField(f) {
+  const el = document.getElementById("f_" + f.name);
+  if (f.type === "checkbox") return el.checked;
+  if (f.type === "multi") return [...el.querySelectorAll("input:checked")].map((i) => i.value);
+  return el.value.trim();
+}
+
+function openForm({ title, fields, submitLabel = "Сохранить", onSubmit }) {
+  $("#modalRoot").innerHTML = `<div class="overlay"><form class="modal">
+    <h3>${esc(title)}</h3>
+    <div class="content">${fields.map(renderField).join("")}</div>
+    <div class="foot">
+      <button type="button" class="btn" data-close>Отмена</button>
+      <button type="submit" class="btn primary">${esc(submitLabel)}</button>
+    </div></form></div>`;
+
+  const form = $("#modalRoot form");
+  form.querySelector("[data-close]").onclick = closeModal;
+  $("#modalRoot .overlay").onclick = (e) => { if (e.target.classList.contains("overlay")) closeModal(); };
+  const first = form.querySelector("input,textarea,select");
+  if (first) first.focus();
+
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const values = {};
+    for (const f of fields) {
+      values[f.name] = readField(f);
+      if (f.required && !values[f.name]) { toast(`Заполните поле «${f.label}»`, "err"); return; }
+    }
+    const submit = form.querySelector('button[type="submit"]');
+    submit.disabled = true;
+    submit.innerHTML = '<span class="spinner"></span> Сохранение…';
+    try {
+      await onSubmit(values);
+      closeModal();
+    } catch (err) {
+      toast(err.message, "err");
+      submit.disabled = false;
+      submit.textContent = submitLabel;
+    }
+  };
+}
+
+function confirmDialog({ title, message, confirmLabel = "Подтвердить", danger = false }) {
+  return new Promise((resolve) => {
+    $("#modalRoot").innerHTML = `<div class="overlay"><div class="modal">
+      <h3>${esc(title)}</h3>
+      <div class="content">${message}</div>
+      <div class="foot">
+        <button class="btn" data-no>Отмена</button>
+        <button class="btn ${danger ? "danger" : "primary"}" data-yes>${esc(confirmLabel)}</button>
+      </div></div></div>`;
+    const done = (v) => { closeModal(); resolve(v); };
+    $("#modalRoot [data-no]").onclick = () => done(false);
+    $("#modalRoot [data-yes]").onclick = () => done(true);
+    $("#modalRoot [data-yes]").focus();
+  });
+}
+
+/* ------------------------------ загрузка --------------------------------- */
+
+async function reload() {
+  const pill = $("#apiStatus");
+  try {
+    const [tree, targets] = await Promise.all([
+      api(`/catalog/tree?include_archived=${state.showArchived}`),
+      api(`/catalog/check-targets?include_archived=${state.showArchivedTargets}`),
+    ]);
+    state.tree = tree;
+    state.targets = targets.targets;
+    pill.className = "badge ok";
+    pill.textContent = "API на связи";
+  } catch (err) {
+    pill.className = "badge warn";
+    pill.textContent = "API недоступен";
+    toast("Не удалось получить данные: " + err.message, "err");
+  }
+  render();
+}
+
+async function mutate(fn, successMessage) {
+  try {
+    await fn();
+    if (successMessage) toast(successMessage, "ok");
+    await reload();
+  } catch (err) {
+    toast(err.message, "err");
+    throw err;
+  }
+}
+
+/* ------------------------------ каталог ---------------------------------- */
+
+function matchesSearch(order) {
+  const q = state.search.trim().toLowerCase();
+  if (!q) return true;
+  const haystack = [order.number, order.title, ...(order.clauses || []).flatMap((c) =>
+    [c.code, c.text, ...(c.rules || []).flatMap((r) => [
+      r.ruleId, r.description, r.checkInstruction,
+      ...(r.targets || []), ...(r.examples || []).map((e) => e.text),
+    ])]
+  )].join(" ").toLowerCase();
+  return haystack.includes(q);
+}
+
+const archivedBadge = (s) => s === "archived" ? '<span class="badge archived">в архиве</span>' : "";
+
+function renderRule(rule, clause) {
+  const type = rule.type === "PROHIBITION"
+    ? '<span class="badge prohibition">Запрет</span>'
+    : '<span class="badge requirement">Требование</span>';
+  const noTargets = !(rule.targets || []).length
+    ? '<span class="badge warn">нет атрибутов — правило не сработает</span>' : "";
+
+  return `<div class="rule ${rule.status === "archived" ? "is-archived" : ""}">
+    <div class="row">
+      <div class="grow">
+        <div class="rule-meta">${type}<span class="mono">${esc(rule.ruleId)}</span>
+          ${archivedBadge(rule.status)}${noTargets}</div>
+        <div>${esc(rule.description)}</div>
+        ${rule.checkInstruction ? `<div class="dim" style="margin-top:5px">${esc(rule.checkInstruction)}</div>` : ""}
+        <div class="targets">
+          ${(rule.targets || []).map((t) => `<span class="chip">${esc(t)}</span>`).join("")}
+          <button class="btn sm ghost" data-act="rule-targets" data-id="${esc(rule.ruleId)}">атрибуты…</button>
+        </div>
+        ${(rule.examples || []).length ? `<div class="examples">${rule.examples.map((ex) => `
+          <div class="example ${ex.isViolation ? "bad" : "good"}">
+            <span class="mark">${ex.isViolation ? "✗" : "✓"}</span>
+            <span class="grow">${esc(ex.text)}</span>
+            <button class="btn sm ghost" data-act="example-del" data-id="${esc(ex.exampleId)}">удалить</button>
+          </div>`).join("")}</div>` : ""}
+      </div>
+      <div class="actions">
+        <button class="btn sm" data-act="rule-edit" data-id="${esc(rule.ruleId)}">Изменить</button>
+        <button class="btn sm" data-act="example-add" data-id="${esc(rule.ruleId)}">+ Пример</button>
+        ${rule.status === "archived"
+          ? `<button class="btn sm" data-act="rule-restore" data-id="${esc(rule.ruleId)}">Вернуть</button>
+             <button class="btn sm danger" data-act="rule-del" data-id="${esc(rule.ruleId)}">Удалить</button>`
+          : `<button class="btn sm" data-act="rule-archive" data-id="${esc(rule.ruleId)}">В архив</button>`}
+      </div>
+    </div></div>`;
+}
+
+function renderClause(clause) {
+  return `<div class="clause ${clause.status === "archived" ? "is-archived" : ""}">
+    <div class="row">
+      <div class="grow">
+        <div class="row" style="align-items:baseline;gap:8px">
+          <b>${esc(clause.code)}</b>${archivedBadge(clause.status)}
+        </div>
+        <div style="margin-top:3px">${esc(clause.text)}</div>
+      </div>
+      <div class="actions">
+        <button class="btn sm" data-act="clause-edit" data-id="${esc(clause.clauseId)}">Изменить</button>
+        <button class="btn sm" data-act="rule-add" data-id="${esc(clause.clauseId)}">+ Правило</button>
+        ${clause.status === "archived"
+          ? `<button class="btn sm" data-act="clause-restore" data-id="${esc(clause.clauseId)}">Вернуть</button>
+             <button class="btn sm danger" data-act="clause-del" data-id="${esc(clause.clauseId)}">Удалить</button>`
+          : `<button class="btn sm" data-act="clause-archive" data-id="${esc(clause.clauseId)}">В архив</button>`}
+      </div>
+    </div>
+    ${(clause.rules || []).map((r) => renderRule(r, clause)).join("")}
+    ${!(clause.rules || []).length ? '<div class="dim" style="margin-top:8px">Правил нет — пункт ничего не проверяет.</div>' : ""}
+  </div>`;
+}
+
+function renderCatalog() {
+  const orders = (state.tree.orders || []).filter(matchesSearch);
+  if (!orders.length) {
+    $("#tree").innerHTML = `<div class="empty">${
+      state.search ? "Ничего не найдено." : "Приказов пока нет. Начните с кнопки «+ Приказ»."}</div>`;
+    return;
+  }
+  $("#tree").innerHTML = orders.map((order) => {
+    const open = state.open.has(order.orderId);
+    const counts = `${(order.clauses || []).length} п. · ${
+      (order.clauses || []).reduce((n, c) => n + (c.rules || []).length, 0)} прав.`;
+    return `<div class="card ${order.status === "archived" ? "is-archived" : ""}">
+      <div class="order-head" data-act="toggle" data-id="${esc(order.orderId)}">
+        <span class="caret ${open ? "open" : ""}">▶</span>
+        <div class="order-title">
+          <b>${esc(order.number)}</b> ${archivedBadge(order.status)}
+          <div class="sub">${esc(order.title)}</div>
+          <div class="dim">${counts}${order.date ? " · " + esc(order.date) : ""}</div>
+        </div>
+        <div class="actions">
+          <button class="btn sm" data-act="order-edit" data-id="${esc(order.orderId)}">Изменить</button>
+          <button class="btn sm" data-act="clause-add" data-id="${esc(order.orderId)}">+ Пункт</button>
+          ${order.status === "archived"
+            ? `<button class="btn sm" data-act="order-restore" data-id="${esc(order.orderId)}">Вернуть</button>
+               <button class="btn sm danger" data-act="order-del" data-id="${esc(order.orderId)}">Удалить</button>`
+            : `<button class="btn sm" data-act="order-archive" data-id="${esc(order.orderId)}">В архив</button>`}
+        </div>
+      </div>
+      ${open ? `<div class="body">${
+        (order.clauses || []).map(renderClause).join("")
+        || '<div class="dim" style="padding:10px 0">Пунктов нет.</div>'}</div>` : ""}
+    </div>`;
+  }).join("");
+}
+
+/* ------------------------------ атрибуты --------------------------------- */
+
+function renderTargets() {
+  if (!state.targets.length) {
+    $("#targetsTable").innerHTML = '<div class="empty">Атрибутов нет. Без них правила не срабатывают.</div>';
+    return;
+  }
+  $("#targetsTable").innerHTML = `<table>
+    <thead><tr><th style="width:24%">Имя</th><th>Описание для модели</th>
+      <th style="width:16%">Правила</th><th style="width:170px"></th></tr></thead>
+    <tbody>${state.targets.map((t) => `
+      <tr class="${t.status === "archived" ? "is-archived" : ""}">
+        <td><span class="mono">${esc(t.name)}</span> ${archivedBadge(t.status)}</td>
+        <td>${t.description
+            ? esc(t.description)
+            : '<span class="badge warn">нет описания — модель не распознает атрибут</span>'}</td>
+        <td>${(t.rules || []).length
+            ? t.rules.map((r) => `<span class="chip">${esc(r)}</span>`).join(" ")
+            : '<span class="dim">не используется</span>'}</td>
+        <td><div class="actions">
+          <button class="btn sm" data-act="target-edit" data-id="${esc(t.name)}">Изменить</button>
+          ${t.status === "archived"
+            ? `<button class="btn sm" data-act="target-restore" data-id="${esc(t.name)}">Вернуть</button>
+               <button class="btn sm danger" data-act="target-del" data-id="${esc(t.name)}">Удалить</button>`
+            : `<button class="btn sm" data-act="target-archive" data-id="${esc(t.name)}">В архив</button>`}
+        </div></td>
+      </tr>`).join("")}</tbody></table>`;
+}
+
+/* --------------------------- поиск по дереву ----------------------------- */
+
+const allClauses = () => (state.tree.orders || []).flatMap((o) => o.clauses || []);
+const allRules = () => allClauses().flatMap((c) => c.rules || []);
+const findOrder = (id) => (state.tree.orders || []).find((o) => o.orderId === id);
+const findClause = (id) => allClauses().find((c) => c.clauseId === id);
+const findRule = (id) => allRules().find((r) => r.ruleId === id);
+const findTarget = (name) => state.targets.find((t) => t.name === name);
+
+/* ------------------------------ действия --------------------------------- */
+
+const targetOptions = () => state.targets
+  .filter((t) => t.status !== "archived")
+  .map((t) => ({ value: t.name, description: t.description }));
+
+const ACTIONS = {
+  toggle(id) {
+    state.open.has(id) ? state.open.delete(id) : state.open.add(id);
+    renderCatalog();
+  },
+
+  "order-edit"(id) {
+    const o = findOrder(id) || {};
+    openForm({
+      title: id ? "Приказ " + o.number : "Новый приказ",
+      fields: [
+        { name: "number", label: "Номер", value: o.number, required: true, placeholder: "ПР-01" },
+        { name: "title", label: "Заголовок", type: "textarea", value: o.title, required: true },
+        { name: "date", label: "Дата", type: "date", value: o.date || "" },
+      ],
+      onSubmit: (v) => mutate(() => api(`/catalog/orders/${encodeURIComponent(id)}`,
+        { method: "PATCH", body: { number: v.number, title: v.title, date: v.date || null } }),
+        "Приказ обновлён"),
+    });
+  },
+
+  "order-add"() {
+    openForm({
+      title: "Новый приказ",
+      submitLabel: "Создать",
+      fields: [
+        { name: "number", label: "Номер", required: true, placeholder: "ПР-01" },
+        { name: "title", label: "Заголовок", type: "textarea", required: true,
+          placeholder: "О порядке постановки целей" },
+        { name: "date", label: "Дата", type: "date" },
+        { name: "orderId", label: "Идентификатор", placeholder: "необязательно",
+          hint: "Если не заполнить — будет построен из номера. Менять потом нельзя." },
+      ],
+      onSubmit: (v) => mutate(() => api("/catalog/orders", { method: "POST", body: {
+        number: v.number, title: v.title, date: v.date || null, orderId: v.orderId || null } }),
+        "Приказ создан"),
+    });
+  },
+
+  async "order-archive"(id) {
+    await mutate(() => api(`/catalog/orders/${encodeURIComponent(id)}/status`,
+      { method: "POST", body: { status: "archived" } }),
+      "Приказ в архиве — его правила больше не применяются");
+  },
+
+  async "order-restore"(id) {
+    await mutate(() => api(`/catalog/orders/${encodeURIComponent(id)}/status`,
+      { method: "POST", body: { status: "active" } }), "Приказ снова действует");
+  },
+
+  async "order-del"(id) {
+    const o = findOrder(id) || {};
+    const clauses = (o.clauses || []).length;
+    const rules = (o.clauses || []).reduce((n, c) => n + (c.rules || []).length, 0);
+    const ok = await confirmDialog({
+      title: "Удалить навсегда?",
+      danger: true,
+      confirmLabel: "Удалить",
+      message: `<p>Приказ <b>${esc(o.number || id)}</b> будет удалён из базы вместе с
+        <b>${clauses}</b> пункт(ами) и <b>${rules}</b> правил(ами), включая примеры.</p>
+        <p class="muted">Это необратимо. Архивирование — обратимо.</p>`,
+    });
+    if (!ok) return;
+    await mutate(() => api(`/catalog/orders/${encodeURIComponent(id)}`, { method: "DELETE" }),
+      "Приказ удалён");
+  },
+
+  "clause-add"(orderId) {
+    openForm({
+      title: "Новый пункт",
+      submitLabel: "Создать",
+      fields: [
+        { name: "code", label: "Номер пункта", required: true, placeholder: "3.1" },
+        { name: "text", label: "Текст пункта", type: "textarea", required: true },
+      ],
+      onSubmit: (v) => mutate(async () => {
+        await api("/catalog/clauses", { method: "POST",
+          body: { orderId, code: v.code, text: v.text } });
+        state.open.add(orderId);
+      }, "Пункт добавлен"),
+    });
+  },
+
+  "clause-edit"(id) {
+    const c = findClause(id) || {};
+    openForm({
+      title: "Пункт " + (c.code || ""),
+      fields: [
+        { name: "code", label: "Номер пункта", value: c.code, required: true },
+        { name: "text", label: "Текст пункта", type: "textarea", value: c.text, required: true },
+      ],
+      onSubmit: (v) => mutate(() => api(`/catalog/clauses/${encodeURIComponent(id)}`,
+        { method: "PATCH", body: v }), "Пункт обновлён"),
+    });
+  },
+
+  async "clause-archive"(id) {
+    await mutate(() => api(`/catalog/clauses/${encodeURIComponent(id)}/status`,
+      { method: "POST", body: { status: "archived" } }), "Пункт в архиве");
+  },
+
+  async "clause-restore"(id) {
+    await mutate(() => api(`/catalog/clauses/${encodeURIComponent(id)}/status`,
+      { method: "POST", body: { status: "active" } }), "Пункт восстановлен");
+  },
+
+  async "clause-del"(id) {
+    const c = findClause(id) || {};
+    const ok = await confirmDialog({
+      title: "Удалить навсегда?", danger: true, confirmLabel: "Удалить",
+      message: `<p>Пункт <b>${esc(c.code || id)}</b> будет удалён вместе с
+        <b>${(c.rules || []).length}</b> правил(ами) и их примерами.</p>
+        <p class="muted">Это необратимо.</p>`,
+    });
+    if (!ok) return;
+    await mutate(() => api(`/catalog/clauses/${encodeURIComponent(id)}`, { method: "DELETE" }),
+      "Пункт удалён");
+  },
+
+  "rule-add"(clauseId) {
+    openForm({
+      title: "Новое правило",
+      submitLabel: "Создать",
+      fields: [
+        { name: "type", label: "Тип", type: "select", value: "REQUIREMENT", options: [
+          { value: "REQUIREMENT", label: "Требование — нарушено, если атрибута НЕТ в цели" },
+          { value: "PROHIBITION", label: "Запрет — нарушен, если атрибут ЕСТЬ в цели" },
+        ] },
+        { name: "description", label: "Формулировка правила", type: "textarea", required: true,
+          placeholder: "Цель обязана содержать конкретный срок исполнения" },
+        { name: "checkInstruction", label: "Что подсказать автору цели", type: "textarea",
+          placeholder: "Добавьте в формулировку дату или период завершения",
+          hint: "Текст попадает в ответ проверки как check_instruction." },
+        { name: "targets", label: "Атрибуты", type: "multi", value: [], options: targetOptions(),
+          hint: "Правило без атрибутов никогда не сработает." },
+      ],
+      onSubmit: (v) => mutate(async () => {
+        await api("/catalog/rules", { method: "POST", body: {
+          clauseId, type: v.type, description: v.description,
+          checkInstruction: v.checkInstruction, targets: v.targets } });
+      }, "Правило создано"),
+    });
+  },
+
+  "rule-edit"(id) {
+    const r = findRule(id) || {};
+    openForm({
+      title: "Правило " + id,
+      fields: [
+        { name: "type", label: "Тип", type: "select", value: r.type, options: [
+          { value: "REQUIREMENT", label: "Требование — нарушено, если атрибута НЕТ в цели" },
+          { value: "PROHIBITION", label: "Запрет — нарушен, если атрибут ЕСТЬ в цели" },
+        ] },
+        { name: "description", label: "Формулировка правила", type: "textarea",
+          value: r.description, required: true },
+        { name: "checkInstruction", label: "Что подсказать автору цели", type: "textarea",
+          value: r.checkInstruction },
+      ],
+      onSubmit: (v) => mutate(() => api(`/catalog/rules/${encodeURIComponent(id)}`,
+        { method: "PATCH", body: v }), "Правило обновлено"),
+    });
+  },
+
+  "rule-targets"(id) {
+    const r = findRule(id) || {};
+    openForm({
+      title: "Атрибуты правила " + id,
+      fields: [{ name: "targets", label: "Применяется к атрибутам", type: "multi",
+        value: r.targets || [], options: targetOptions(),
+        hint: r.type === "PROHIBITION"
+          ? "Запрет сработает, если хотя бы один из атрибутов найден в цели."
+          : "Требование сработает по каждому атрибуту, которого в цели нет." }],
+      onSubmit: (v) => mutate(() => api(`/catalog/rules/${encodeURIComponent(id)}/targets`,
+        { method: "PUT", body: { targets: v.targets } }), "Привязка обновлена"),
+    });
+  },
+
+  async "rule-archive"(id) {
+    await mutate(() => api(`/catalog/rules/${encodeURIComponent(id)}/status`,
+      { method: "POST", body: { status: "archived" } }), "Правило в архиве");
+  },
+
+  async "rule-restore"(id) {
+    await mutate(() => api(`/catalog/rules/${encodeURIComponent(id)}/status`,
+      { method: "POST", body: { status: "active" } }), "Правило восстановлено");
+  },
+
+  async "rule-del"(id) {
+    const ok = await confirmDialog({
+      title: "Удалить навсегда?", danger: true, confirmLabel: "Удалить",
+      message: `<p>Правило <b>${esc(id)}</b> и его примеры будут удалены из базы.</p>
+        <p class="muted">Это необратимо.</p>`,
+    });
+    if (!ok) return;
+    await mutate(() => api(`/catalog/rules/${encodeURIComponent(id)}`, { method: "DELETE" }),
+      "Правило удалено");
+  },
+
+  "example-add"(ruleId) {
+    const r = findRule(ruleId) || {};
+    openForm({
+      title: "Пример к правилу " + ruleId,
+      submitLabel: "Добавить",
+      fields: [
+        { name: "text", label: "Формулировка", type: "textarea", required: true },
+        { name: "isViolation", label: "Это пример нарушения", type: "checkbox",
+          value: r.type === "PROHIBITION",
+          hint: "Снятая галочка — образец правильной формулировки." },
+      ],
+      onSubmit: (v) => mutate(() => api("/catalog/examples", { method: "POST",
+        body: { ruleId, text: v.text, isViolation: v.isViolation } }), "Пример добавлен"),
+    });
+  },
+
+  async "example-del"(id) {
+    await mutate(() => api(`/catalog/examples/${encodeURIComponent(id)}`, { method: "DELETE" }),
+      "Пример удалён");
+  },
+
+  "target-add"() {
+    openForm({
+      title: "Новый атрибут",
+      submitLabel: "Создать",
+      fields: [
+        { name: "name", label: "Имя", required: true, placeholder: "срок_исполнения",
+          hint: "Написание с пробелом и с подчёркиванием считается одним атрибутом — двойник создать не получится." },
+        { name: "description", label: "Описание для модели", type: "textarea", required: true,
+          placeholder: "в цели указан проверяемый срок: конкретная дата, месяц, квартал или год",
+          hint: "Это перечисление признаков, по которым модель решает, есть атрибут в цели или нет." },
+      ],
+      onSubmit: (v) => mutate(() => api("/catalog/check-targets", { method: "POST", body: v }),
+        "Атрибут создан"),
+    });
+  },
+
+  "target-edit"(name) {
+    const t = findTarget(name) || {};
+    openForm({
+      title: "Атрибут " + name,
+      fields: [{ name: "description", label: "Описание для модели", type: "textarea",
+        value: t.description, required: true }],
+      onSubmit: (v) => mutate(() => api(`/catalog/check-targets/${encodeURIComponent(name)}`,
+        { method: "PATCH", body: v }), "Описание обновлено"),
+    });
+  },
+
+  async "target-archive"(name) {
+    const t = findTarget(name) || {};
+    if ((t.rules || []).length) {
+      const ok = await confirmDialog({
+        title: "Атрибут используется",
+        confirmLabel: "Всё равно в архив",
+        message: `<p>На атрибут <b>${esc(name)}</b> ссылаются правила:
+          ${t.rules.map((r) => `<span class="chip">${esc(r)}</span>`).join(" ")}.</p>
+          <p class="muted">В архиве атрибут перестанет участвовать в проверках, и эти правила
+          по нему срабатывать не будут.</p>`,
+      });
+      if (!ok) return;
+    }
+    await mutate(() => api(`/catalog/check-targets/${encodeURIComponent(name)}/status`,
+      { method: "POST", body: { status: "archived" } }), "Атрибут в архиве");
+  },
+
+  async "target-restore"(name) {
+    await mutate(() => api(`/catalog/check-targets/${encodeURIComponent(name)}/status`,
+      { method: "POST", body: { status: "active" } }), "Атрибут восстановлен");
+  },
+
+  async "target-del"(name) {
+    const ok = await confirmDialog({
+      title: "Удалить навсегда?", danger: true, confirmLabel: "Удалить",
+      message: `<p>Атрибут <b>${esc(name)}</b> будет удалён из базы.</p>
+        <p class="muted">Это необратимо.</p>`,
+    });
+    if (!ok) return;
+    await mutate(() => api(`/catalog/check-targets/${encodeURIComponent(name)}`,
+      { method: "DELETE" }), "Атрибут удалён");
+  },
+};
+
+document.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-act]");
+  if (!button) return;
+  const action = ACTIONS[button.dataset.act];
+  if (action) { event.stopPropagation(); action(button.dataset.id); }
+});
+
+/* --------------------------- проверка цели ------------------------------- */
+
+const STATUS_VIEW = {
+  ALLOWED: { text: "Нарушений нет", cls: "ok" },
+  VIOLATIONS_FOUND: { text: "Найдены нарушения", cls: "warn" },
+  NEEDS_MANUAL_REVIEW: { text: "Требуется ручная проверка", cls: "warn" },
+};
+
+async function runCheck() {
+  const goal = $("#goalInput").value.trim();
+  if (!goal) { toast("Введите формулировку цели", "err"); return; }
+  const button = $("#checkBtn");
+  button.disabled = true;
+  button.innerHTML = '<span class="spinner"></span> Проверяем…';
+  $("#checkResult").innerHTML = "";
+  try {
+    const result = await api("/check-goal", { method: "POST", body: { goal } });
+    const view = STATUS_VIEW[result.status] || { text: result.status, cls: "archived" };
+    $("#checkResult").innerHTML = `<div class="panel" style="margin-top:16px">
+      <div class="row" style="align-items:center;gap:10px">
+        <span class="badge ${view.cls}">${esc(view.text)}</span>
+        <span class="dim">атрибуты в цели: ${
+          (result.detected_attributes || []).length
+            ? result.detected_attributes.map((a) => `<span class="chip">${esc(a)}</span>`).join(" ")
+            : "не найдены"}</span>
+      </div>
+      ${(result.notes || []).length ? `<div style="margin-top:12px">${
+        result.notes.map((n) => `<div class="badge warn" style="display:block;margin-top:6px;white-space:normal">${esc(n)}</div>`).join("")
+      }</div>` : ""}
+      ${(result.violations || []).map((v) => `<div class="violation">
+        <div class="rule-meta">
+          <span class="badge ${v.violation_type === "PROHIBITION" ? "prohibition" : "requirement"}">
+            ${v.violation_type === "PROHIBITION" ? "Запрет нарушен" : "Требование не выполнено"}</span>
+          <span class="mono">${esc(v.order_number || "")} ${esc(v.clause_code || "")}</span>
+          <span class="chip">${esc(v.attribute)}</span>
+        </div>
+        <div>${esc(v.rule_text || "")}</div>
+        ${v.check_instruction ? `<div class="dim" style="margin-top:6px">${esc(v.check_instruction)}</div>` : ""}
+        ${(v.examples || []).filter(Boolean).length ? `<div class="examples">${
+          v.examples.filter(Boolean).map((ex) => `<div class="example ${
+            v.example_kind === "violation" ? "bad" : "good"}">
+            <span class="mark">${v.example_kind === "violation" ? "✗" : "✓"}</span>
+            <span>${esc(ex)}</span></div>`).join("")}</div>` : ""}
+      </div>`).join("")}
+    </div>`;
+  } catch (err) {
+    toast(err.message, "err");
+  } finally {
+    button.disabled = false;
+    button.textContent = "Проверить";
+  }
+}
+
+/* ---------------------------- диагностика -------------------------------- */
+
+async function loadHealth() {
+  $("#healthPanel").innerHTML = '<div class="panel"><span class="spinner"></span> Проверяем…</div>';
+  try {
+    const response = await fetch(API + "/ready");
+    const data = await response.json();
+    const ready = data.status === "ready";
+    $("#healthPanel").innerHTML = `<div class="panel">
+      <span class="badge ${ready ? "ok" : "warn"}">${ready ? "Граф готов к проверкам" : "Граф не готов"}</span>
+      <div class="dim" style="margin-top:8px">
+        Neo4j: ${data.neo4j ? "доступен" : "недоступен"} · активных атрибутов: ${data.check_targets ?? 0}
+      </div>
+      ${(data.problems || []).length ? `<div style="margin-top:14px">${
+        data.problems.map((p) => `<div class="problem"><span>⚠</span><span>${esc(p)}</span></div>`).join("")
+      }</div>` : '<div class="dim" style="margin-top:12px">Проблем не найдено.</div>'}
+    </div>`;
+  } catch (err) {
+    $("#healthPanel").innerHTML = `<div class="panel"><span class="badge warn">API недоступен</span>
+      <div class="dim" style="margin-top:8px">${esc(err.message)}</div></div>`;
+  }
+}
+
+/* ------------------------------- вкладки --------------------------------- */
+
+function render() {
+  renderCatalog();
+  renderTargets();
+}
+
+function switchTab(tab) {
+  state.tab = tab;
+  for (const b of document.querySelectorAll("nav button"))
+    b.setAttribute("aria-selected", String(b.dataset.tab === tab));
+  for (const id of ["catalog", "targets", "check", "health"])
+    document.getElementById("tab-" + id).classList.toggle("hidden", id !== tab);
+  if (tab === "health") loadHealth();
+}
+
+for (const b of document.querySelectorAll("nav button")) b.onclick = () => switchTab(b.dataset.tab);
+$("#addOrder").onclick = () => ACTIONS["order-add"]();
+$("#addTarget").onclick = () => ACTIONS["target-add"]();
+$("#reloadBtn").onclick = reload;
+$("#healthRefresh").onclick = loadHealth;
+$("#checkBtn").onclick = runCheck;
+$("#search").oninput = (e) => { state.search = e.target.value; renderCatalog(); };
+$("#showArchived").onchange = (e) => { state.showArchived = e.target.checked; reload(); };
+$("#showArchivedTargets").onchange = (e) => { state.showArchivedTargets = e.target.checked; reload(); };
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
+
+reload();
 </script>
 </body>
 </html>
