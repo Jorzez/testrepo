@@ -22,6 +22,7 @@ import logging
 import os
 import re
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -35,6 +36,9 @@ log = logging.getLogger(__name__)
 MODEL = os.getenv("VLLM_MODEL", "Qwen/Qwen3-8B")
 LLM_TIMEOUT = float(os.getenv("LLM_TIMEOUT_SECONDS", "60"))
 LLM_MAX_RETRIES = int(os.getenv("LLM_MAX_RETRIES", "2"))
+# Пакетная проверка упирается в модель, а не в базу: несколько целей
+# отправляются в vLLM параллельно.
+BULK_MAX_WORKERS = max(1, int(os.getenv("BULK_MAX_WORKERS", "4")))
 
 # Статусы результата проверки
 STATUS_ALLOWED = "ALLOWED"
@@ -248,9 +252,31 @@ def extract_attributes(goal: str, targets: list[dict[str, str]]) -> Extraction:
     return resolve_attributes(raw_attributes, targets)
 
 
-def check_goal(goal: str) -> dict[str, Any]:
-    """Проверяет цель. Всегда возвращает словарь, никогда не бросает исключений LLM."""
-    targets = get_check_targets()
+def duplicate_notes(targets: list[dict[str, str]]) -> list[str]:
+    """Предупреждения о двойниках написаний — считаются один раз на пакет."""
+    notes: list[str] = []
+    for variants in index_targets(targets).values():
+        if len(variants) > 1:
+            notes.append(
+                "В графе есть дубликаты атрибута, различающиеся написанием: "
+                + ", ".join(f'"{v}"' for v in variants)
+                + ". Их нужно свести к одному узлу :CheckTarget."
+            )
+    return notes
+
+
+def check_goal(
+    goal: str,
+    targets: list[dict[str, str]] | None = None,
+    notes_prefix: list[str] | None = None,
+) -> dict[str, Any]:
+    """Проверяет цель. Всегда возвращает словарь, никогда не бросает исключений LLM.
+
+    targets и notes_prefix можно передать снаружи, чтобы не перечитывать
+    словарь атрибутов на каждую цель пакета.
+    """
+    if targets is None:
+        targets = get_check_targets()
 
     try:
         extraction = extract_attributes(goal, targets)
@@ -272,17 +298,11 @@ def check_goal(goal: str) -> dict[str, Any]:
 
     violations = find_violations(extraction.attributes)
 
-    notes = list(extraction.warnings)
-    duplicates = {k: v for k, v in index_targets(targets).items() if len(v) > 1}
-    if duplicates:
-        # Дубликаты означают, что часть правил висит на «двойниках»
-        # и результат проверки может быть неполным.
-        for variants in duplicates.values():
-            notes.append(
-                "В графе есть дубликаты атрибута, различающиеся написанием: "
-                + ", ".join(f'"{v}"' for v in variants)
-                + ". Их нужно свести к одному узлу :CheckTarget."
-            )
+    # Дубликаты означают, что часть правил висит на «двойниках»
+    # и результат проверки может быть неполным.
+    notes = list(extraction.warnings) + list(
+        notes_prefix if notes_prefix is not None else duplicate_notes(targets)
+    )
 
     return {
         "goal": goal,
@@ -292,3 +312,35 @@ def check_goal(goal: str) -> dict[str, Any]:
         "violations": violations,
         "notes": notes,
     }
+
+
+def check_goals(items: list[dict[str, Any]]) -> dict[str, Any]:
+    """Пакетная проверка. На вход [{"goal": "...", "id": "..."}, ...].
+
+    Словарь атрибутов читается один раз на весь пакет; обращения к модели
+    идут параллельно, потому что именно они — узкое место. Порядок ответов
+    совпадает с порядком входа, id возвращается как передан.
+    """
+    if not items:
+        return {"results": [], "summary": {"total": 0, "allowed": 0,
+                                           "violations": 0, "manual_review": 0}}
+
+    targets = get_check_targets()
+    notes = duplicate_notes(targets)
+    log.info("Пакетная проверка: целей=%d, потоков=%d", len(items), BULK_MAX_WORKERS)
+
+    def one(item: dict[str, Any]) -> dict[str, Any]:
+        return {"id": item.get("id"), **check_goal(item["goal"], targets, notes)}
+
+    workers = min(BULK_MAX_WORKERS, len(items))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        results = list(pool.map(one, items))
+
+    summary = {
+        "total": len(results),
+        "allowed": sum(1 for r in results if r["status"] == STATUS_ALLOWED),
+        "violations": sum(1 for r in results if r["status"] == STATUS_VIOLATIONS),
+        "manual_review": sum(1 for r in results if r["status"] == STATUS_MANUAL_REVIEW),
+    }
+    log.info("Пакетная проверка завершена: %s", summary)
+    return {"results": results, "summary": summary}

@@ -80,8 +80,16 @@ def get_descendants(node_id: str):
 
 
 @router.delete("/nodes/{node_id}")
-def delete_node(node_id: str):
-    return _handle(catalog.delete_node, node_id)
+def delete_node(
+    node_id: str,
+    force: bool = Query(False, description="Удалить без предварительного архивирования"),
+):
+    """Физическое удаление узла со всем, что без него теряет смысл.
+
+    Без force удаляется только архивированный узел. Атрибут, на который
+    ссылаются правила, не удаляется в любом случае — иначе правила повиснут.
+    """
+    return _handle(catalog.delete_node, node_id, True, force)
 
 
 # ------------------------------- создание -----------------------------------

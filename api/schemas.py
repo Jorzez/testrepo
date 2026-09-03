@@ -63,3 +63,10 @@ class ClauseReferences(BaseModel):
 
 class MoveRequest(BaseModel):
     parentNodeId: str = Field(..., description="nodeId нового родителя")
+
+
+class GoalItem(BaseModel):
+    """Одна цель в пакетной проверке."""
+
+    goal: str = Field(..., min_length=1, description="Формулировка цели")
+    id: Optional[str] = Field(None, description="Идентификатор вызывающей системы; возвращается как есть")

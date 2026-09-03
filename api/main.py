@@ -4,14 +4,15 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Body, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 import diagnostics
 import graph
-from agent import check_goal
+import schemas
+from agent import check_goal, check_goals
 from routes import router as catalog_router
 
 logging.basicConfig(
@@ -59,6 +60,25 @@ class GoalRequest(BaseModel):
 def check(req: GoalRequest):
     """Проверка цели на соответствие действующим приказам."""
     return check_goal(req.goal)
+
+
+MAX_BATCH = int(os.getenv("MAX_GOALS_PER_REQUEST", "200"))
+
+
+@app.post("/check-goals")
+def check_many(items: list[schemas.GoalItem] = Body(..., description="Массив целей")):
+    """Пакетная проверка целей.
+
+    Вход — массив объектов вида {"goal": "...", "id": "..."}. Порядок ответов
+    совпадает с порядком входа, id возвращается как передан (или null).
+    Обращения к модели идут параллельно; словарь атрибутов читается один раз.
+    """
+    if len(items) > MAX_BATCH:
+        raise HTTPException(
+            status_code=413,
+            detail=f"За один раз можно проверить не более {MAX_BATCH} целей, передано {len(items)}",
+        )
+    return check_goals([item.model_dump() for item in items])
 
 
 @app.get("/check-targets")

@@ -134,3 +134,55 @@ def test_check_goal_passes_through(client, monkeypatch):
 
 def test_check_goal_requires_goal_field(client):
     assert client.post("/check-goal", json={}).status_code == 422
+
+
+# --------------------------- пакетная проверка ------------------------------
+
+
+def test_check_goals_accepts_array(client, monkeypatch):
+    monkeypatch.setattr(main, "check_goals", lambda items: {
+        "results": [{"id": i["id"], "goal": i["goal"], "status": "ALLOWED", "allowed": True}
+                    for i in items],
+        "summary": {"total": len(items), "allowed": len(items),
+                    "violations": 0, "manual_review": 0},
+    })
+    response = client.post("/check-goals", json=[
+        {"goal": "первая", "id": "g-1"}, {"goal": "вторая", "id": "g-2"}])
+    assert response.status_code == 200
+    assert [r["id"] for r in response.json()["results"]] == ["g-1", "g-2"]
+    assert response.json()["summary"]["total"] == 2
+
+
+def test_check_goals_id_is_optional(client, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(main, "check_goals",
+                        lambda items: seen.setdefault("items", items) or {"results": [], "summary": {}})
+    client.post("/check-goals", json=[{"goal": "без id"}])
+    assert seen["items"] == [{"goal": "без id", "id": None}]
+
+
+def test_check_goals_rejects_empty_goal(client):
+    assert client.post("/check-goals", json=[{"goal": "", "id": "x"}]).status_code == 422
+
+
+def test_check_goals_rejects_oversized_batch(client, monkeypatch):
+    monkeypatch.setattr(main, "MAX_BATCH", 2)
+    response = client.post("/check-goals", json=[{"goal": f"ц{i}"} for i in range(3)])
+    assert response.status_code == 413
+    assert "не более 2" in response.json()["detail"]
+
+
+def test_delete_passes_force_flag(client, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(catalog, "delete_node",
+                        lambda node_id, cascade, force: seen.setdefault("force", force) or {"deleted": node_id})
+    client.request("DELETE", "/catalog/nodes/4:db:2?force=true")
+    assert seen["force"] is True
+
+
+def test_delete_without_force_defaults_to_false(client, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(catalog, "delete_node",
+                        lambda node_id, cascade, force: seen.setdefault("force", force) or {"deleted": node_id})
+    client.request("DELETE", "/catalog/nodes/4:db:2")
+    assert seen["force"] is False

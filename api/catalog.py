@@ -338,8 +338,14 @@ def _assert_archived(node: dict[str, Any], what: str) -> None:
         raise Conflict(f"Удалять можно только архивированный {what}. Сначала отправьте его в архив.")
 
 
-def delete_node(node_id: str, cascade: bool = True) -> dict[str, Any]:
-    """Физическое удаление узла и того, что без него теряет смысл."""
+def delete_node(node_id: str, cascade: bool = True, force: bool = False) -> dict[str, Any]:
+    """Физическое удаление узла и того, что без него теряет смысл.
+
+    По умолчанию требует, чтобы узел был архивирован: «удалить» не должно
+    означать «потерять с первого клика». force=True снимает это требование —
+    интерфейс использует его для явного пункта меню «Удалить навсегда»,
+    который всегда подтверждается диалогом со списком того, что уйдёт.
+    """
     node = _fetch_node(node_id)
     labels = node["labels"]
 
@@ -348,7 +354,8 @@ def delete_node(node_id: str, cascade: bool = True) -> dict[str, Any]:
         return {"deleted": node_id, "examples": 1}
 
     if "CheckTarget" in labels:
-        _assert_archived(node, "атрибут")
+        if not force:
+            _assert_archived(node, "атрибут")
         used = _run(
             "MATCH (r:Rule)-[:APPLIES_TO]->(t) WHERE elementId(t) = $node_id "
             "RETURN r.ruleId AS rule_id",
@@ -362,8 +369,9 @@ def delete_node(node_id: str, cascade: bool = True) -> dict[str, Any]:
         _run("MATCH (n) WHERE elementId(n) = $node_id DETACH DELETE n", node_id=node_id)
         return {"deleted": node_id}
 
-    what = {"Order": "приказ", "Clause": "пункт", "Rule": "правило"}.get(labels[0], "узел")
-    _assert_archived(node, what)
+    if not force:
+        what = {"Order": "приказ", "Clause": "пункт", "Rule": "правило"}.get(labels[0], "узел")
+        _assert_archived(node, what)
 
     if not cascade:
         _run("MATCH (n) WHERE elementId(n) = $node_id DETACH DELETE n", node_id=node_id)

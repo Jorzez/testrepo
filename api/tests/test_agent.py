@@ -4,12 +4,15 @@ import pytest
 
 import agent
 from agent import (
+    Extraction,
     ExtractionError,
     STATUS_ALLOWED,
     STATUS_MANUAL_REVIEW,
     STATUS_VIOLATIONS,
     build_prompt,
     check_goal,
+    check_goals,
+    duplicate_notes,
     extract_attributes,
     index_targets,
     normalize_name,
@@ -300,3 +303,95 @@ def test_check_goal_fails_closed_on_extraction_error(monkeypatch):
     assert result["allowed"] is False
     assert result["notes"]
     assert called == [], "при сбое извлечения граф опрашивать не нужно"
+
+
+# ------------------------------ check_goals ---------------------------------
+
+
+@pytest.fixture
+def bulk(monkeypatch):
+    """Пакет проверяется без Neo4j и без модели."""
+    calls = {"targets": 0}
+
+    def targets():
+        calls["targets"] += 1
+        return TARGETS
+
+    monkeypatch.setattr(agent, "get_check_targets", targets)
+    monkeypatch.setattr(agent, "extract_attributes",
+                        lambda g, t, *a: Extraction(["проект"] if "проект" in g else []))
+    monkeypatch.setattr(agent, "find_violations",
+                        lambda attrs: [] if "проект" in attrs else [{"attribute": "проект"}])
+    return calls
+
+
+def test_bulk_keeps_order_and_ids(bulk):
+    result = check_goals([
+        {"goal": "в рамках проекта Альфа", "id": "g-1"},
+        {"goal": "просто сделать", "id": "g-2"},
+    ])
+    assert [r["id"] for r in result["results"]] == ["g-1", "g-2"]
+    assert [r["allowed"] for r in result["results"]] == [True, False]
+
+
+def test_bulk_reads_dictionary_once(bulk):
+    """Словарь атрибутов — один запрос на весь пакет, а не на каждую цель."""
+    check_goals([{"goal": f"цель {i}", "id": str(i)} for i in range(5)])
+    assert bulk["targets"] == 1
+
+
+def test_bulk_summary(bulk):
+    result = check_goals([
+        {"goal": "в рамках проекта", "id": "1"},
+        {"goal": "без проекта", "id": "2"},
+        {"goal": "тоже без", "id": "3"},
+    ])
+    assert result["summary"] == {"total": 3, "allowed": 1, "violations": 2, "manual_review": 0}
+
+
+def test_bulk_empty_input_touches_nothing(bulk):
+    result = check_goals([])
+    assert result["results"] == []
+    assert result["summary"]["total"] == 0
+    assert bulk["targets"] == 0
+
+
+def test_bulk_id_is_optional(bulk):
+    assert check_goals([{"goal": "без идентификатора"}])["results"][0]["id"] is None
+
+
+def test_bulk_failure_of_one_goal_does_not_break_the_batch(monkeypatch):
+    def boom(goal, targets, *args):
+        if "сломать" in goal:
+            raise ExtractionError("модель недоступна")
+        return Extraction(["проект"])
+
+    monkeypatch.setattr(agent, "get_check_targets", lambda: TARGETS)
+    monkeypatch.setattr(agent, "extract_attributes", boom)
+    monkeypatch.setattr(agent, "find_violations", lambda attrs: [])
+
+    result = check_goals([
+        {"goal": "нормальная", "id": "a"},
+        {"goal": "сломать", "id": "b"},
+        {"goal": "снова норм", "id": "c"},
+    ])
+    assert [r["status"] for r in result["results"]] == [
+        STATUS_ALLOWED, STATUS_MANUAL_REVIEW, STATUS_ALLOWED]
+    assert result["summary"]["manual_review"] == 1
+
+
+def test_duplicate_notes_computed_once_per_batch(monkeypatch):
+    targets = [{"name": "срок исполнения"}, {"name": "срок_исполнения", "description": "д"}]
+    monkeypatch.setattr(agent, "get_check_targets", lambda: targets)
+    monkeypatch.setattr(agent, "extract_attributes", lambda g, t, *a: Extraction([]))
+    monkeypatch.setattr(agent, "find_violations", lambda attrs: [])
+
+    result = check_goals([{"goal": "a", "id": "1"}, {"goal": "b", "id": "2"}])
+    for row in result["results"]:
+        hits = [n for n in row["notes"] if "дубликаты" in n.lower()]
+        assert len(hits) == 1, "заметка о дублях не должна повторяться внутри одной цели"
+
+
+def test_duplicate_notes_helper():
+    assert duplicate_notes(TARGETS) == []
+    assert duplicate_notes([{"name": "срок исполнения"}, {"name": "срок_исполнения"}])

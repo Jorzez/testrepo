@@ -89,7 +89,19 @@ label.check{display:inline-flex;align-items:center;gap:7px;cursor:pointer;color:
 .order-title{flex:1;min-width:0}
 .order-title b{font-size:15.5px}
 .order-title .sub{color:var(--ink-2);font-size:13.5px;margin-top:2px}
-.actions{display:flex;gap:4px;flex:none;flex-wrap:wrap;justify-content:flex-end;max-width:56%}
+.actions{display:flex;gap:4px;flex:none;flex-wrap:wrap;justify-content:flex-end}
+.menu-btn{padding:4px 10px;font-size:15px;line-height:1}
+.popup{position:fixed;z-index:70;min-width:210px;background:var(--panel);border:1px solid var(--line);
+  border-radius:10px;box-shadow:var(--shadow);padding:5px;display:flex;flex-direction:column}
+.popup button{background:none;border:0;text-align:left;padding:8px 11px;border-radius:7px;
+  cursor:pointer;font-size:14px;display:flex;gap:9px;align-items:center}
+.popup button:hover{background:var(--panel-2)}
+.popup button.danger{color:var(--danger)}
+.popup button.danger:hover{background:var(--danger-soft)}
+.popup .sep{height:1px;background:var(--line-soft);margin:5px 4px}
+.clause-head{display:flex;gap:10px;align-items:flex-start;cursor:pointer;border-radius:8px;
+  padding:4px 6px;margin:-4px -6px}
+.clause-head:hover{background:var(--line-soft)}
 .body{border-top:1px solid var(--line-soft);padding:6px 16px 14px 40px;background:var(--panel-2)}
 .clause{border-left:2px solid var(--line);padding:11px 0 11px 14px;margin-top:10px}
 .clause.is-archived{opacity:.62}
@@ -241,7 +253,8 @@ const state = {
   showArchived: false,
   showArchivedTargets: false,
   search: "",
-  open: new Set(),   // nodeId раскрытых приказов
+  open: new Set(),          // nodeId раскрытых приказов
+  openClauses: new Set(),   // nodeId раскрытых пунктов
 };
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
@@ -273,6 +286,87 @@ async function api(path, options = {}) {
       : `HTTP ${response.status}`);
   }
   return payload;
+}
+
+/* ------------------------------- меню ------------------------------------ */
+
+/* Все операции над приказом, пунктом, правилом и атрибутом собраны в одно
+   выпадающее меню: иначе строка действий шире самого содержимого.
+   У примеров кнопки остаются на виду — их всего три и они частые. */
+
+const MENUS = {
+  Order: (n) => [
+    { label: "Изменить", act: "order-edit" },
+    { label: "+ Пункт", act: "clause-add" },
+    { label: "Свойства", act: "props" },
+    null,
+    n.status === "archived"
+      ? { label: "Вернуть из архива", act: "restore" }
+      : { label: "В архив", act: "archive" },
+    { label: "Удалить навсегда", act: "delete", danger: true },
+  ],
+  Clause: (n) => [
+    { label: "Изменить", act: "clause-edit" },
+    { label: "+ Правило", act: "rule-add" },
+    { label: "Свойства", act: "props" },
+    { label: "Перекрёстные ссылки", act: "clause-refs" },
+    { label: "Перенести в другой приказ", act: "clause-move" },
+    null,
+    n.status === "archived"
+      ? { label: "Вернуть из архива", act: "restore" }
+      : { label: "В архив", act: "archive" },
+    { label: "Удалить навсегда", act: "delete", danger: true },
+  ],
+  Rule: (n) => [
+    { label: "Изменить", act: "rule-edit" },
+    { label: "Атрибуты правила", act: "rule-targets" },
+    { label: "+ Пример", act: "example-add" },
+    { label: "Свойства", act: "props" },
+    { label: "Перенести в другой пункт", act: "rule-move" },
+    null,
+    n.status === "archived"
+      ? { label: "Вернуть из архива", act: "restore" }
+      : { label: "В архив", act: "archive" },
+    { label: "Удалить навсегда", act: "delete", danger: true },
+  ],
+  CheckTarget: (n) => [
+    { label: "Изменить", act: "target-edit" },
+    { label: "Свойства", act: "props" },
+    null,
+    n.status === "archived"
+      ? { label: "Вернуть из архива", act: "restore" }
+      : { label: "В архив", act: "archive" },
+    { label: "Удалить навсегда", act: "delete", danger: true },
+  ],
+};
+
+const menuButton = (kind, id) =>
+  `<button class="btn sm menu-btn" data-menu data-kind="${kind}" data-id="${esc(id)}"
+     title="Действия" aria-label="Действия">⋯</button>`;
+
+function closeMenu() {
+  const popup = document.querySelector(".popup");
+  if (popup) popup.remove();
+}
+
+function openMenu(trigger) {
+  closeMenu();
+  const node = findAny(trigger.dataset.id) || {};
+  const items = (MENUS[trigger.dataset.kind] || (() => []))(node);
+  const popup = document.createElement("div");
+  popup.className = "popup";
+  popup.innerHTML = items.map((item) => item
+    ? `<button data-act="${item.act}" data-id="${esc(trigger.dataset.id)}"
+         class="${item.danger ? "danger" : ""}">${esc(item.label)}</button>`
+    : '<div class="sep"></div>').join("");
+  document.body.append(popup);
+
+  const rect = trigger.getBoundingClientRect();
+  const width = popup.offsetWidth;
+  popup.style.left = Math.max(8, Math.min(rect.right - width, innerWidth - width - 8)) + "px";
+  const below = rect.bottom + 6;
+  popup.style.top = (below + popup.offsetHeight > innerHeight - 8
+    ? Math.max(8, rect.top - popup.offsetHeight - 6) : below) + "px";
 }
 
 /* ------------------------------ модалки ---------------------------------- */
@@ -514,6 +608,22 @@ function matchesSearch(order) {
   return haystack.includes(q);
 }
 
+/* При активном поиске совпавшие узлы раскрываются сами: иначе результат
+   прячется внутри свёрнутых пунктов. */
+function clauseMatches(clause) {
+  const q = state.search.trim().toLowerCase();
+  if (!q) return false;
+  return [clause.code, clause.text, clause.clauseId, ...(clause.rules || []).flatMap((r) => [
+    r.ruleId, r.description, r.checkInstruction,
+    ...(r.targets || []), ...(r.examples || []).map((e) => e.text),
+  ])].join(" ").toLowerCase().includes(q);
+}
+
+const isOrderOpen = (order) =>
+  state.open.has(order.nodeId) || (!!state.search.trim() && matchesSearch(order));
+const isClauseOpen = (clause) =>
+  state.openClauses.has(clause.nodeId) || clauseMatches(clause);
+
 const archivedBadge = (s) => s === "archived" ? '<span class="badge archived">в архиве</span>' : "";
 const idBadge = (v, name) => v ? "" :
   `<span class="badge warn" title="Без ${name} узел не попадёт в выгрузку">нет ${name}</span>`;
@@ -555,45 +665,35 @@ function renderRule(rule) {
           ? `<div class="examples">${rule.examples.map(renderExample).join("")}</div>`
           : '<div class="dim" style="margin-top:8px">Примеров нет — в ответе проверки поле examples будет пустым.</div>'}
       </div>
-      <div class="actions">
-        <button class="btn sm" data-act="rule-edit" data-id="${esc(rule.nodeId)}">Изменить</button>
-        <button class="btn sm" data-act="example-add" data-id="${esc(rule.nodeId)}">+ Пример</button>
-        <button class="btn sm ghost" data-act="props" data-id="${esc(rule.nodeId)}">Свойства</button>
-        <button class="btn sm ghost" data-act="rule-move" data-id="${esc(rule.nodeId)}">Перенести</button>
-        ${rule.status === "archived"
-          ? `<button class="btn sm" data-act="restore" data-id="${esc(rule.nodeId)}">Вернуть</button>
-             <button class="btn sm danger" data-act="delete" data-id="${esc(rule.nodeId)}">Удалить</button>`
-          : `<button class="btn sm" data-act="archive" data-id="${esc(rule.nodeId)}">В архив</button>`}
-      </div>
+      <div class="actions">${menuButton("Rule", rule.nodeId)}</div>
     </div></div>`;
 }
 
 function renderClause(clause) {
+  const open = isClauseOpen(clause);
+  const rules = clause.rules || [];
   const refs = (clause.references || []).map((r) => `<span class="chip">→ ${esc(r.code)}</span>`).join(" ");
+
   return `<div class="clause ${clause.status === "archived" ? "is-archived" : ""}" data-node="${esc(clause.nodeId)}">
     <div class="row">
-      <div class="grow">
-        <div class="row" style="align-items:center;gap:8px;flex-wrap:wrap">
-          <b>${esc(clause.code || "(без номера)")}</b>
-          ${idBadge(clause.clauseId, "clauseId")}${archivedBadge(clause.status)}
+      <div class="grow clause-head" data-act="toggle-clause" data-id="${esc(clause.nodeId)}">
+        <span class="caret ${open ? "open" : ""}">▶</span>
+        <div class="grow">
+          <div class="row" style="align-items:center;gap:8px;flex-wrap:wrap">
+            <b>${esc(clause.code || "(без номера)")}</b>
+            ${idBadge(clause.clauseId, "clauseId")}${archivedBadge(clause.status)}
+            <span class="dim">${rules.length} прав.</span>
+          </div>
+          <div style="margin-top:3px">${esc(clause.text)}</div>
         </div>
-        <div style="margin-top:3px">${esc(clause.text)}</div>
-        ${refs ? `<div class="targets"><span class="dim">ссылается на:</span> ${refs}</div>` : ""}
       </div>
-      <div class="actions">
-        <button class="btn sm" data-act="clause-edit" data-id="${esc(clause.nodeId)}">Изменить</button>
-        <button class="btn sm" data-act="rule-add" data-id="${esc(clause.nodeId)}">+ Правило</button>
-        <button class="btn sm ghost" data-act="props" data-id="${esc(clause.nodeId)}">Свойства</button>
-        <button class="btn sm ghost" data-act="clause-refs" data-id="${esc(clause.nodeId)}">Ссылки</button>
-        <button class="btn sm ghost" data-act="clause-move" data-id="${esc(clause.nodeId)}">Перенести</button>
-        ${clause.status === "archived"
-          ? `<button class="btn sm" data-act="restore" data-id="${esc(clause.nodeId)}">Вернуть</button>
-             <button class="btn sm danger" data-act="delete" data-id="${esc(clause.nodeId)}">Удалить</button>`
-          : `<button class="btn sm" data-act="archive" data-id="${esc(clause.nodeId)}">В архив</button>`}
-      </div>
+      <div class="actions">${menuButton("Clause", clause.nodeId)}</div>
     </div>
-    ${(clause.rules || []).map(renderRule).join("")}
-    ${!(clause.rules || []).length ? '<div class="dim" style="margin-top:8px">Правил нет — пункт ничего не проверяет.</div>' : ""}
+    ${open ? `<div style="padding-left:28px">
+      ${refs ? `<div class="targets"><span class="dim">ссылается на:</span> ${refs}</div>` : ""}
+      ${rules.map(renderRule).join("")}
+      ${rules.length ? "" : '<div class="dim" style="margin-top:8px">Правил нет — пункт ничего не проверяет.</div>'}
+    </div>` : ""}
   </div>`;
 }
 
@@ -605,7 +705,7 @@ function renderCatalog() {
     return;
   }
   $("#tree").innerHTML = orders.map((order) => {
-    const open = state.open.has(order.nodeId);
+    const open = isOrderOpen(order);
     const counts = `${(order.clauses || []).length} п. · ${
       (order.clauses || []).reduce((n, c) => n + (c.rules || []).length, 0)} прав.`;
     return `<div class="card ${order.status === "archived" ? "is-archived" : ""}" data-node="${esc(order.nodeId)}">
@@ -617,15 +717,7 @@ function renderCatalog() {
           <div class="sub">${esc(order.title || "")}</div>
           <div class="dim">${counts}${order.date ? " · " + esc(order.date) : ""}</div>
         </div>
-        <div class="actions">
-          <button class="btn sm" data-act="order-edit" data-id="${esc(order.nodeId)}">Изменить</button>
-          <button class="btn sm" data-act="clause-add" data-id="${esc(order.nodeId)}">+ Пункт</button>
-          <button class="btn sm ghost" data-act="props" data-id="${esc(order.nodeId)}">Свойства</button>
-          ${order.status === "archived"
-            ? `<button class="btn sm" data-act="restore" data-id="${esc(order.nodeId)}">Вернуть</button>
-               <button class="btn sm danger" data-act="delete" data-id="${esc(order.nodeId)}">Удалить</button>`
-            : `<button class="btn sm" data-act="archive" data-id="${esc(order.nodeId)}">В архив</button>`}
-        </div>
+        <div class="actions">${menuButton("Order", order.nodeId)}</div>
       </div>
       ${open ? `<div class="body">${
         (order.clauses || []).map(renderClause).join("")
@@ -653,14 +745,7 @@ function renderTargets() {
         <td>${(t.rules || []).length
             ? t.rules.map((r) => `<span class="chip">${esc(r)}</span>`).join(" ")
             : '<span class="dim">не используется</span>'}</td>
-        <td><div class="actions">
-          <button class="btn sm" data-act="target-edit" data-id="${esc(t.nodeId)}">Изменить</button>
-          <button class="btn sm ghost" data-act="props" data-id="${esc(t.nodeId)}">Свойства</button>
-          ${t.status === "archived"
-            ? `<button class="btn sm" data-act="restore" data-id="${esc(t.nodeId)}">Вернуть</button>
-               <button class="btn sm danger" data-act="delete" data-id="${esc(t.nodeId)}">Удалить</button>`
-            : `<button class="btn sm" data-act="archive" data-id="${esc(t.nodeId)}">В архив</button>`}
-        </div></td>
+        <td><div class="actions">${menuButton("CheckTarget", t.nodeId)}</div></td>
       </tr>`).join("")}</tbody></table>`;
 }
 
@@ -716,6 +801,11 @@ const ACTIONS = {
     renderCatalog();
   },
 
+  "toggle-clause"(id) {
+    state.openClauses.has(id) ? state.openClauses.delete(id) : state.openClauses.add(id);
+    renderCatalog();
+  },
+
   props: (id) => openProperties(id),
 
   async archive(id) {
@@ -752,11 +842,12 @@ const ACTIONS = {
     const ok = await confirmDialog({
       title: "Удалить навсегда?", danger: true, confirmLabel: "Удалить",
       message: `<p>Узел будет удалён из базы${parts.length ? " вместе с " + parts.join(", ") : ""}.</p>
-        <p class="muted">Это необратимо. Архивирование — обратимо.</p>`,
+        <p class="muted">Это необратимо и не требует предварительного архивирования.
+        Если нужно просто отключить узел от проверок — используйте «В архив», это обратимо.</p>`,
     });
     if (!ok) return;
     try {
-      await mutate(() => api(`/catalog/nodes/${enc(id)}`, { method: "DELETE" }), "Удалено");
+      await mutate(() => api(`/catalog/nodes/${enc(id)}?force=true`, { method: "DELETE" }), "Удалено");
     } catch (err) { toast(err.message, "err"); }
   },
 
@@ -861,9 +952,12 @@ const ACTIONS = {
           emptyText: "Атрибутов нет — заведите их на вкладке «Атрибуты».",
           hint: "Правило без атрибутов никогда не сработает." },
       ],
-      onSubmit: (v) => mutate(() => api("/catalog/rules", { method: "POST", body: {
-        clauseNodeId, type: v.type, description: v.description,
-        checkInstruction: v.checkInstruction, targets: v.targets } }), "Правило создано"),
+      onSubmit: (v) => mutate(async () => {
+        await api("/catalog/rules", { method: "POST", body: {
+          clauseNodeId, type: v.type, description: v.description,
+          checkInstruction: v.checkInstruction, targets: v.targets } });
+        state.openClauses.add(clauseNodeId);
+      }, "Правило создано"),
     });
   },
 
@@ -979,13 +1073,20 @@ const ACTIONS = {
 };
 
 document.addEventListener("click", (event) => {
+  const trigger = event.target.closest("[data-menu]");
+  if (!event.target.closest(".popup") && !trigger) closeMenu();
+  if (trigger) { event.stopPropagation(); openMenu(trigger); return; }
+
   const button = event.target.closest("[data-act]");
   if (!button) return;
   const action = ACTIONS[button.dataset.act];
   if (!action) return;
   event.stopPropagation();
+  closeMenu();
   Promise.resolve(action(button.dataset.id)).catch((err) => toast(err.message, "err"));
 });
+addEventListener("scroll", closeMenu, true);
+addEventListener("resize", closeMenu);
 
 /* --------------------------- переход к объекту --------------------------- */
 
@@ -1016,7 +1117,17 @@ async function goToNode(nodeId, kind) {
     await reload();
     order = orderOf(nodeId) || byNode(allOrders(), nodeId);
   }
-  if (order) { state.open.add(order.nodeId); renderCatalog(); }
+  if (order) {
+    state.open.add(order.nodeId);
+    // Пункты свёрнуты по умолчанию — раскрываем тот, внутри которого искомый узел.
+    for (const clause of order.clauses || []) {
+      const inside = clause.nodeId === nodeId
+        || (clause.rules || []).some((r) => r.nodeId === nodeId
+            || (r.examples || []).some((e) => e.nodeId === nodeId));
+      if (inside) state.openClauses.add(clause.nodeId);
+    }
+    renderCatalog();
+  }
   if (!flash(nodeId)) toast("Объект не найден в текущем представлении", "err");
 }
 
@@ -1193,11 +1304,20 @@ $("#search").oninput = (e) => { state.search = e.target.value; renderCatalog(); 
 $("#showArchived").onchange = (e) => { state.showArchived = e.target.checked; reload(); };
 $("#showArchivedTargets").onchange = (e) => { state.showArchivedTargets = e.target.checked; reload(); };
 $("#expandAll").onclick = () => {
-  for (const o of allOrders()) state.open.add(o.nodeId);
+  for (const o of allOrders()) {
+    state.open.add(o.nodeId);
+    for (const c of o.clauses || []) state.openClauses.add(c.nodeId);
+  }
   renderCatalog();
 };
-$("#collapseAll").onclick = () => { state.open.clear(); renderCatalog(); };
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
+$("#collapseAll").onclick = () => {
+  state.open.clear();
+  state.openClauses.clear();
+  renderCatalog();
+};
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { closeMenu(); closeModal(); }
+});
 
 reload();
 </script>
