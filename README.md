@@ -287,6 +287,26 @@ docker compose exec api python export_graph.py --output /init/seed.cypher
 docker compose exec api python export_graph.py --stdout
 ```
 
+### Полный сброс и загрузка
+
+`neo4j/init/reset_and_load.cypher` удаляет все узлы и заводит каталог заново —
+уже со всеми полями, которых требуют текущие проверки: бизнес-ключи, статусы,
+описания атрибутов, примеры нужного вида.
+
+```bash
+docker compose exec neo4j neo4j-admin database dump neo4j --to-stdout > backup.dump
+docker compose run --rm -e SEED_FILE=/init/reset_and_load.cypher seeder
+curl -s localhost:8080/ready | python3 -m json.tool     # ожидается ready
+docker compose exec api python export_graph.py --output /init/seed.cypher
+```
+
+Скрипт удаляет данные — дамп перед запуском обязателен. Полная альтернатива,
+если не жаль тома целиком: `docker compose down && docker volume rm <проект>_neo4j_data`.
+
+В скрипте заведено то, что видно по ответам API: ПР-01, пункты 1.1 и 2.4.
+Остальную нормативку добавляйте по закомментированному шаблону в конце файла
+или через интерфейс — он делает ровно то же самое.
+
 ### Миграции
 
 Разовые правки данных лежат в `neo4j/init/migrations/` и запускаются
@@ -306,6 +326,9 @@ docker compose run --rm \
 |---|---|
 | `001_cleanup_demo_data` | удаляет демо-приказы ПР-2024-15 / ПР-2024-22, сводит двойники `CheckTarget`, чистит осиротевшие атрибуты и примеры |
 | `002_check_target_descriptions` | проставляет описания атрибутам `проект` и `срок_исполнения`; шаблон для остальных внутри файла |
+
+Миграции правят существующую базу, не удаляя её. Если проще начать с чистого
+листа — используйте `reset_and_load.cypher` выше.
 
 ### Порядок приведения базы в порядок
 
