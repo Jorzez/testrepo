@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+import diagnostics
 import graph
 from agent import check_goal
 from routes import router as catalog_router
@@ -76,35 +77,34 @@ def health():
 def ready():
     """Readiness: зависимости доступны, граф заполнен и внутренне непротиворечив.
 
-    Дубликаты написаний атрибутов и атрибуты без описания делают проверку
-    целей молча неполной, поэтому это тоже «не готов», а не предупреждение.
+    Дубликаты написаний, атрибуты без описания, правила без атрибутов и узлы
+    без идентификаторов делают проверку целей молча неполной, поэтому это
+    тоже «не готов», а не предупреждение. Развёрнутый разбор с указанием
+    конкретных узлов — в /catalog/diagnostics.
     """
-    neo4j_ok = graph.verify_connectivity()
-    targets = 0
-    problems: list[str] = []
-    diagnostics: dict = {}
+    if not graph.verify_connectivity():
+        return JSONResponse(status_code=503, content={
+            "status": "not_ready", "neo4j": False, "check_targets": 0,
+            "problems": ["Neo4j недоступен"], "diagnostics": {},
+        })
 
-    if neo4j_ok:
-        try:
-            targets = len(graph.get_check_targets())
-            diagnostics = graph.diagnose()
-            problems = diagnostics["problems"]
-        except Exception as exc:  # noqa: BLE001
-            log.warning("Не удалось прочитать словарь атрибутов: %s", exc)
-            neo4j_ok = False
+    try:
+        report = diagnostics.collect()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Диагностика не выполнилась: %s", exc)
+        return JSONResponse(status_code=503, content={
+            "status": "not_ready", "neo4j": True, "check_targets": 0,
+            "problems": [f"Не удалось прочитать граф: {exc}"], "diagnostics": {},
+        })
 
-    if not targets:
-        problems = ["Словарь атрибутов (:CheckTarget) пуст — граф не заполнен"] + problems
-
-    ready_now = neo4j_ok and bool(targets) and not problems
     payload = {
-        "status": "ready" if ready_now else "not_ready",
-        "neo4j": neo4j_ok,
-        "check_targets": targets,
-        "problems": problems,
-        "diagnostics": diagnostics,
+        "status": "ready" if report["ready"] else "not_ready",
+        "neo4j": True,
+        "check_targets": report["check_targets"],
+        "problems": report["problems"],
+        "diagnostics": report,
     }
-    if ready_now:
+    if report["ready"]:
         return payload
-    log.warning("Граф не готов к проверкам: %s", "; ".join(problems) or "Neo4j недоступен")
+    log.warning("Граф не готов к проверкам: %s", "; ".join(report["problems"]))
     return JSONResponse(status_code=503, content=payload)

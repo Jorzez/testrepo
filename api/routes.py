@@ -1,10 +1,15 @@
-"""HTTP-маршруты каталога нормативных требований."""
+"""HTTP-маршруты каталога нормативных требований.
+
+Узлы адресуются по nodeId (elementId Neo4j): он есть всегда, в отличие от
+бизнес-ключей, которых может не быть у ранее заведённых данных.
+"""
 
 import logging
 
 from fastapi import APIRouter, HTTPException, Query
 
 import catalog
+import diagnostics
 import schemas
 
 log = logging.getLogger(__name__)
@@ -36,94 +41,74 @@ def get_check_targets(include_archived: bool = Query(False)):
     return {"targets": _handle(catalog.list_check_targets, include_archived)}
 
 
-# ------------------------------- приказы ------------------------------------
+@router.get("/clauses")
+def get_clauses_flat():
+    """Плоский список пунктов — для выбора родителя и перекрёстных ссылок."""
+    return {"clauses": _handle(catalog.list_clauses_flat)}
+
+
+@router.get("/diagnostics")
+def get_diagnostics():
+    """Развёрнутая диагностика графа с указанием конкретных узлов."""
+    return _handle(diagnostics.collect)
+
+
+# --------------------- операции над произвольным узлом ----------------------
+
+
+@router.get("/nodes/{node_id}")
+def get_node(node_id: str):
+    """Все свойства узла — для редактора свойств."""
+    return _handle(catalog.get_node, node_id)
+
+
+@router.patch("/nodes/{node_id}/properties")
+def patch_node_properties(node_id: str, body: schemas.PropertiesRequest):
+    """Правка произвольных свойств. null в значении удаляет свойство."""
+    return _handle(catalog.update_properties, node_id, dict(body.properties))
+
+
+@router.post("/nodes/{node_id}/status")
+def post_node_status(node_id: str, body: schemas.StatusRequest):
+    return _handle(catalog.set_status, node_id, body.status)
+
+
+@router.get("/nodes/{node_id}/descendants")
+def get_descendants(node_id: str):
+    """Что будет удалено вместе с узлом."""
+    return _handle(catalog.count_descendants, node_id)
+
+
+@router.delete("/nodes/{node_id}")
+def delete_node(node_id: str):
+    return _handle(catalog.delete_node, node_id)
+
+
+# ------------------------------- создание -----------------------------------
 
 
 @router.post("/orders", status_code=201)
 def post_order(body: schemas.OrderCreate):
-    return _handle(
-        catalog.create_order, body.number, body.title, body.date, body.orderId
-    )
-
-
-@router.patch("/orders/{order_id:path}")
-def patch_order(order_id: str, body: schemas.OrderUpdate):
-    return _handle(catalog.update_order, order_id, **body.model_dump(exclude_none=True))
-
-
-@router.post("/orders/{order_id:path}/status")
-def post_order_status(order_id: str, body: schemas.StatusRequest):
-    return _handle(catalog.set_order_status, order_id, body.status)
-
-
-@router.delete("/orders/{order_id:path}")
-def delete_order(order_id: str):
-    return _handle(catalog.delete_order, order_id)
-
-
-# -------------------------------- пункты ------------------------------------
+    return _handle(catalog.create_order, body.number, body.title, body.date, body.orderId)
 
 
 @router.post("/clauses", status_code=201)
 def post_clause(body: schemas.ClauseCreate):
-    return _handle(catalog.create_clause, body.orderId, body.code, body.text, body.clauseId)
-
-
-@router.patch("/clauses/{clause_id:path}")
-def patch_clause(clause_id: str, body: schemas.ClauseUpdate):
-    return _handle(catalog.update_clause, clause_id, **body.model_dump(exclude_none=True))
-
-
-@router.post("/clauses/{clause_id:path}/status")
-def post_clause_status(clause_id: str, body: schemas.StatusRequest):
-    return _handle(catalog.set_clause_status, clause_id, body.status)
-
-
-@router.delete("/clauses/{clause_id:path}")
-def delete_clause(clause_id: str):
-    return _handle(catalog.delete_clause, clause_id)
-
-
-# ------------------------------- правила ------------------------------------
+    return _handle(catalog.create_clause, body.orderNodeId, body.code, body.text, body.clauseId)
 
 
 @router.post("/rules", status_code=201)
 def post_rule(body: schemas.RuleCreate):
     return _handle(
-        catalog.create_rule,
-        body.clauseId,
-        body.type,
-        body.description,
-        body.checkInstruction,
-        body.targets,
-        body.ruleId,
+        catalog.create_rule, body.clauseNodeId, body.type, body.description,
+        body.checkInstruction, body.targets, body.ruleId,
     )
 
 
-@router.patch("/rules/{rule_id:path}")
-def patch_rule(rule_id: str, body: schemas.RuleUpdate):
-    fields = body.model_dump(exclude_none=True)
-    if "checkInstruction" in fields:
-        fields["check_instruction"] = fields.pop("checkInstruction")
-    return _handle(catalog.update_rule, rule_id, **fields)
-
-
-@router.put("/rules/{rule_id:path}/targets")
-def put_rule_targets(rule_id: str, body: schemas.RuleTargets):
-    return {"targets": _handle(catalog.set_rule_targets, rule_id, body.targets)}
-
-
-@router.post("/rules/{rule_id:path}/status")
-def post_rule_status(rule_id: str, body: schemas.StatusRequest):
-    return _handle(catalog.set_rule_status, rule_id, body.status)
-
-
-@router.delete("/rules/{rule_id:path}")
-def delete_rule(rule_id: str):
-    return _handle(catalog.delete_rule, rule_id)
-
-
-# ------------------------------- атрибуты -----------------------------------
+@router.post("/examples", status_code=201)
+def post_example(body: schemas.ExampleCreate):
+    return _handle(catalog.create_example, body.ruleNodeId, body.text,
+                   body.isViolation, body.exampleId)
 
 
 @router.post("/check-targets", status_code=201)
@@ -131,39 +116,33 @@ def post_check_target(body: schemas.CheckTargetCreate):
     return _handle(catalog.create_check_target, body.name, body.description)
 
 
-@router.patch("/check-targets/{name:path}")
-def patch_check_target(name: str, body: schemas.CheckTargetUpdate):
-    return _handle(catalog.update_check_target, name, body.description)
+# -------------------------------- связи -------------------------------------
 
 
-@router.post("/check-targets/{name:path}/status")
-def post_check_target_status(name: str, body: schemas.StatusRequest):
-    return _handle(catalog.set_check_target_status, name, body.status)
+@router.put("/rules/{node_id}/targets")
+def put_rule_targets(node_id: str, body: schemas.RuleTargets):
+    return {"targets": _handle(catalog.set_rule_targets, node_id, body.targets)}
 
 
-@router.delete("/check-targets/{name:path}")
-def delete_check_target(name: str):
-    return _handle(catalog.delete_check_target, name)
+@router.put("/clauses/{node_id}/references")
+def put_clause_references(node_id: str, body: schemas.ClauseReferences):
+    return {"references": _handle(catalog.set_clause_references, node_id, body.references)}
 
 
-# ------------------------------- примеры ------------------------------------
+@router.post("/clauses/{node_id}/move")
+def post_move_clause(node_id: str, body: schemas.MoveRequest):
+    return _handle(catalog.move_clause, node_id, body.parentNodeId)
 
 
-@router.post("/examples", status_code=201)
-def post_example(body: schemas.ExampleCreate):
-    return _handle(
-        catalog.create_example, body.ruleId, body.text, body.isViolation, body.exampleId
-    )
+@router.post("/rules/{node_id}/move")
+def post_move_rule(node_id: str, body: schemas.MoveRequest):
+    return _handle(catalog.move_rule, node_id, body.parentNodeId)
 
 
-@router.patch("/examples/{example_id:path}")
-def patch_example(example_id: str, body: schemas.ExampleUpdate):
-    fields = body.model_dump(exclude_none=True)
-    if "isViolation" in fields:
-        fields["is_violation"] = fields.pop("isViolation")
-    return _handle(catalog.update_example, example_id, **fields)
+# ------------------------------- ремонт -------------------------------------
 
 
-@router.delete("/examples/{example_id:path}")
-def delete_example(example_id: str):
-    return _handle(catalog.delete_example, example_id)
+@router.post("/repair-identifiers")
+def post_repair_identifiers():
+    """Проставляет недостающие orderId / clauseId / ruleId / exampleId и статусы."""
+    return _handle(catalog.repair_identifiers)
