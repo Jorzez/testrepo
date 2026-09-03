@@ -90,15 +90,16 @@ label.check{display:inline-flex;align-items:center;gap:7px;cursor:pointer;color:
 .order-title b{font-size:15.5px}
 .order-title .sub{color:var(--ink-2);font-size:13.5px;margin-top:2px}
 .actions{display:flex;gap:4px;flex:none;flex-wrap:wrap;justify-content:flex-end}
-.menu-btn{padding:4px 10px;font-size:15px;line-height:1}
-.popup{position:fixed;z-index:70;min-width:210px;background:var(--panel);border:1px solid var(--line);
-  border-radius:10px;box-shadow:var(--shadow);padding:5px;display:flex;flex-direction:column}
-.popup button{background:none;border:0;text-align:left;padding:8px 11px;border-radius:7px;
-  cursor:pointer;font-size:14px;display:flex;gap:9px;align-items:center}
+.menu-btn{min-width:46px;justify-content:center;padding:7px 12px;font-size:18px;
+  line-height:1;letter-spacing:1px;font-weight:600}
+.popup{position:fixed;z-index:70;min-width:118px;background:var(--panel);border:1px solid var(--line);
+  border-radius:9px;box-shadow:var(--shadow);padding:3px;display:flex;flex-direction:column}
+.popup button{background:none;border:0;text-align:left;padding:5px 9px;border-radius:6px;
+  cursor:pointer;font-size:13px;white-space:nowrap;display:flex;gap:9px;align-items:center}
 .popup button:hover{background:var(--panel-2)}
 .popup button.danger{color:var(--danger)}
 .popup button.danger:hover{background:var(--danger-soft)}
-.popup .sep{height:1px;background:var(--line-soft);margin:5px 4px}
+.popup .sep{height:1px;background:var(--line-soft);margin:3px 3px}
 .clause-head{display:flex;gap:10px;align-items:flex-start;cursor:pointer;border-radius:8px;
   padding:4px 6px;margin:-4px -6px}
 .clause-head:hover{background:var(--line-soft)}
@@ -199,7 +200,7 @@ tr.is-archived{opacity:.6}
       <button class="btn sm" id="expandAll">Раскрыть все</button>
       <button class="btn sm" id="collapseAll">Свернуть</button>
       <label class="check"><input type="checkbox" id="showArchived"> Архив</label>
-      <button class="btn primary" id="addOrder">+ Приказ</button>
+      <button class="btn primary" id="addOrder">Создать</button>
     </div>
     <div id="tree"></div>
   </section>
@@ -208,7 +209,7 @@ tr.is-archived{opacity:.6}
     <div class="toolbar">
       <div class="grow muted">Атрибут без описания модель системно не распознаёт — правило на нём будет срабатывать всегда.</div>
       <label class="check"><input type="checkbox" id="showArchivedTargets"> Архив</label>
-      <button class="btn primary" id="addTarget">+ Атрибут</button>
+      <button class="btn primary" id="addTarget">Создать</button>
     </div>
     <div id="targetsTable"></div>
   </section>
@@ -297,46 +298,46 @@ async function api(path, options = {}) {
 const MENUS = {
   Order: (n) => [
     { label: "Изменить", act: "order-edit" },
-    { label: "+ Пункт", act: "clause-add" },
+    { label: "Создать пункт", act: "clause-add" },
     { label: "Свойства", act: "props" },
     null,
     n.status === "archived"
-      ? { label: "Вернуть из архива", act: "restore" }
+      ? { label: "Вернуть", act: "restore" }
       : { label: "В архив", act: "archive" },
-    { label: "Удалить навсегда", act: "delete", danger: true },
+    { label: "Удалить", act: "delete", danger: true },
   ],
   Clause: (n) => [
     { label: "Изменить", act: "clause-edit" },
-    { label: "+ Правило", act: "rule-add" },
+    { label: "Создать правило", act: "rule-add" },
     { label: "Свойства", act: "props" },
-    { label: "Перекрёстные ссылки", act: "clause-refs" },
-    { label: "Перенести в другой приказ", act: "clause-move" },
+    { label: "Ссылки", act: "clause-refs" },
+    { label: "Перенести", act: "clause-move" },
     null,
     n.status === "archived"
-      ? { label: "Вернуть из архива", act: "restore" }
+      ? { label: "Вернуть", act: "restore" }
       : { label: "В архив", act: "archive" },
-    { label: "Удалить навсегда", act: "delete", danger: true },
+    { label: "Удалить", act: "delete", danger: true },
   ],
   Rule: (n) => [
     { label: "Изменить", act: "rule-edit" },
-    { label: "Атрибуты правила", act: "rule-targets" },
-    { label: "+ Пример", act: "example-add" },
+    { label: "Атрибуты", act: "rule-targets" },
+    { label: "Создать пример", act: "example-add" },
     { label: "Свойства", act: "props" },
-    { label: "Перенести в другой пункт", act: "rule-move" },
+    { label: "Перенести", act: "rule-move" },
     null,
     n.status === "archived"
-      ? { label: "Вернуть из архива", act: "restore" }
+      ? { label: "Вернуть", act: "restore" }
       : { label: "В архив", act: "archive" },
-    { label: "Удалить навсегда", act: "delete", danger: true },
+    { label: "Удалить", act: "delete", danger: true },
   ],
   CheckTarget: (n) => [
     { label: "Изменить", act: "target-edit" },
     { label: "Свойства", act: "props" },
     null,
     n.status === "archived"
-      ? { label: "Вернуть из архива", act: "restore" }
+      ? { label: "Вернуть", act: "restore" }
       : { label: "В архив", act: "archive" },
-    { label: "Удалить навсегда", act: "delete", danger: true },
+    { label: "Удалить", act: "delete", danger: true },
   ],
 };
 
@@ -701,7 +702,7 @@ function renderCatalog() {
   const orders = (state.tree.orders || []).filter(matchesSearch);
   if (!orders.length) {
     $("#tree").innerHTML = `<div class="empty">${
-      state.search ? "Ничего не найдено." : "Приказов пока нет. Начните с кнопки «+ Приказ»."}</div>`;
+      state.search ? "Ничего не найдено." : "Приказов пока нет. Начните с кнопки «Создать»."}</div>`;
     return;
   }
   $("#tree").innerHTML = orders.map((order) => {

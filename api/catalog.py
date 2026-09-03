@@ -380,21 +380,13 @@ def delete_node(node_id: str, cascade: bool = True, force: bool = False) -> dict
     stats = _one(
         """
         MATCH (n) WHERE elementId(n) = $node_id
-        OPTIONAL MATCH (n)-[:CONTAINS*0..1]->(c:Clause)
-        OPTIONAL MATCH (c)-[:DEFINES]->(cr:Rule)
-        OPTIONAL MATCH (n)-[:DEFINES*0..1]->(r:Rule)
-        WITH n, collect(DISTINCT c) AS cs, collect(DISTINCT cr) + collect(DISTINCT r) AS rs
-        UNWIND (CASE WHEN size(rs) = 0 THEN [null] ELSE rs END) AS rule
-        OPTIONAL MATCH (rule)-[:HAS_EXAMPLE]->(e:ViolationExample)
-        WITH n, cs, collect(DISTINCT rule) AS rs, collect(DISTINCT e) AS es
-        WITH n,
-             [x IN cs WHERE x IS NOT NULL AND elementId(x) <> elementId(n)] AS cs,
-             [x IN rs WHERE x IS NOT NULL AND elementId(x) <> elementId(n)] AS rs,
-             [x IN es WHERE x IS NOT NULL] AS es
-        WITH n, cs, rs, es, size(cs) AS clauses, size(rs) AS rules, size(es) AS examples
-        FOREACH (x IN es | DETACH DELETE x)
-        FOREACH (x IN rs | DETACH DELETE x)
-        FOREACH (x IN cs | DETACH DELETE x)
+        OPTIONAL MATCH (n)-[:CONTAINS|DEFINES|HAS_EXAMPLE*1..3]->(d)
+        WITH n, collect(DISTINCT d) AS ds
+        WITH n, ds,
+             size([x IN ds WHERE x:Clause])           AS clauses,
+             size([x IN ds WHERE x:Rule])             AS rules,
+             size([x IN ds WHERE x:ViolationExample]) AS examples
+        FOREACH (x IN ds | DETACH DELETE x)
         DETACH DELETE n
         RETURN clauses, rules, examples
         """,
@@ -405,20 +397,19 @@ def delete_node(node_id: str, cascade: bool = True, force: bool = False) -> dict
 
 
 def count_descendants(node_id: str) -> dict[str, int]:
-    """Что уйдёт вместе с узлом — для честного диалога подтверждения."""
+    """Что уйдёт вместе с узлом — для честного диалога подтверждения.
+
+    Один проход по нисходящим связям вместо набора OPTIONAL MATCH:
+    так запрос остаётся в одной области видимости и его нечем сломать.
+    """
     row = _one(
         """
         MATCH (n) WHERE elementId(n) = $node_id
-        OPTIONAL MATCH (n)-[:CONTAINS]->(c:Clause)
-        OPTIONAL MATCH (n)-[:CONTAINS]->(:Clause)-[:DEFINES]->(r1:Rule)
-        OPTIONAL MATCH (n)-[:DEFINES]->(r2:Rule)
-        WITH n, collect(DISTINCT c) AS cs, collect(DISTINCT r1) + collect(DISTINCT r2) AS rs
-        UNWIND (CASE WHEN size(rs) = 0 THEN [null] ELSE rs END) AS rule
-        OPTIONAL MATCH (rule)-[:HAS_EXAMPLE]->(e1:ViolationExample)
-        OPTIONAL MATCH (n)-[:HAS_EXAMPLE]->(e2:ViolationExample)
-        RETURN size([x IN collect(DISTINCT c) WHERE x IS NOT NULL]) AS clauses,
-               size([x IN collect(DISTINCT rule) WHERE x IS NOT NULL]) AS rules,
-               size([x IN collect(DISTINCT e1) + collect(DISTINCT e2) WHERE x IS NOT NULL]) AS examples
+        OPTIONAL MATCH (n)-[:CONTAINS|DEFINES|HAS_EXAMPLE*1..3]->(d)
+        WITH collect(DISTINCT d) AS ds
+        RETURN size([x IN ds WHERE x:Clause])           AS clauses,
+               size([x IN ds WHERE x:Rule])             AS rules,
+               size([x IN ds WHERE x:ViolationExample]) AS examples
         """,
         node_id=node_id,
     )
