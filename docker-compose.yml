@@ -1,6 +1,18 @@
+# Стек рассчитан на сервер без доступа в интернет.
+#
+#   * pull_policy: never — compose никогда не ходит в реестр; образы должны
+#     быть загружены заранее (scripts/offline/install.sh делает docker load).
+#   * Веса модели читаются из локального каталога ${MODELS_DIR}, а не
+#     скачиваются с Hugging Face; HF_HUB_OFFLINE запрещает любые попытки.
+#   * Образ API собирается из колёс в api/vendor/wheels, pip к PyPI не ходит.
+#
+# Подготовка набора на машине с интернетом: scripts/offline/prepare.sh
+# Установка на сервере:                     scripts/offline/install.sh
+
 services:
   neo4j:
     image: neo4j:5.26
+    pull_policy: never
     restart: unless-stopped
     environment:
       NEO4J_AUTH: neo4j/${NEO4J_PASSWORD}
@@ -21,7 +33,9 @@ services:
   # Neo4j 5 не исполняет .cypher из /init сам, поэтому это делает seed.py.
   # Скрипт идемпотентен, поэтому запускается при каждом подъёме стека.
   seeder:
+    image: goal-checker-api:${APP_VERSION:-latest}
     build: ./api
+    pull_policy: never
     restart: "no"
     command: ["python", "seed.py"]
     environment:
@@ -37,27 +51,36 @@ services:
         condition: service_healthy
 
   vllm:
-    # Рекомендуется зафиксировать конкретный тег вместо latest:
-    #   VLLM_IMAGE=vllm/vllm-openai:v0.8.5 docker compose up -d
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:latest}
+    # Тег зафиксирован: на сервере без интернета «latest» означает
+    # «что успели загрузить», а это должно быть видно в конфигурации.
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.9.2}
+    pull_policy: never
     restart: unless-stopped
     environment:
-      HUGGING_FACE_HUB_TOKEN: ${HF_TOKEN}
+      # Запрет на любые обращения к Hugging Face и телеметрию.
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      VLLM_NO_USAGE_STATS: "1"
+      DO_NOT_TRACK: "1"
+    # Веса лежат в ${MODELS_DIR}/${VLLM_MODEL_DIR}; наружу модель представляется
+    # под именем ${VLLM_MODEL}, чтобы API не зависел от пути на диске.
     command: >
-      --model ${VLLM_MODEL}
+      --model /models/${VLLM_MODEL_DIR:-Qwen3-8B}
+      --served-model-name ${VLLM_MODEL}
       --max-model-len 8192
       --gpu-memory-utilization 0.90
     ports:
       - "8000:8000"
     volumes:
-      - hf_cache:/root/.cache/huggingface
+      - ${MODELS_DIR:-./models}:/models:ro
     healthcheck:
       # В образе может не быть curl — проверяем средствами Python.
       test: ["CMD-SHELL", "python3 -c \"import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=5)\""]
       interval: 15s
       timeout: 10s
       retries: 10
-      # Загрузка весов 8B-модели занимает минуты, поэтому длинный start_period.
+      # Загрузка весов 8B-модели с диска занимает минуты, поэтому длинный start_period.
       start_period: 900s
     deploy:
       resources:
@@ -68,7 +91,9 @@ services:
               capabilities: [gpu]
 
   api:
+    image: goal-checker-api:${APP_VERSION:-latest}
     build: ./api
+    pull_policy: never
     restart: unless-stopped
     environment:
       NEO4J_URI: bolt://neo4j:7687
@@ -77,6 +102,9 @@ services:
       VLLM_URL: http://vllm:8000/v1
       VLLM_MODEL: ${VLLM_MODEL}
       LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-60}
+      LLM_MAX_RETRIES: ${LLM_MAX_RETRIES:-2}
+      BULK_MAX_WORKERS: ${BULK_MAX_WORKERS:-4}
+      MAX_GOALS_PER_REQUEST: ${MAX_GOALS_PER_REQUEST:-200}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     ports:
@@ -92,14 +120,15 @@ services:
       vllm:
         condition: service_healthy
 
+  # Интерфейс на React: статика собирается в образ (web/Dockerfile) на машине
+  # с интернетом и приезжает на сервер готовой — node и npm там не нужны.
   web:
-    image: nginx:1.27-alpine
+    image: goal-checker-web:${APP_VERSION:-latest}
+    build: ./web
+    pull_policy: never
     restart: unless-stopped
-    volumes:
-      - ./web:/usr/share/nginx/html:ro
     ports:
       - "3000:80"
 
 volumes:
   neo4j_data:
-  hf_cache:
