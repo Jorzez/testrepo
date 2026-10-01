@@ -13,6 +13,15 @@
 //    PROHIBITION — нарушение, если атрибут ПРИСУТСТВУЕТ в цели
 //    REQUIREMENT — нарушение, если атрибут ОТСУТСТВУЕТ в цели
 //
+//  Разграничение по подразделениям:
+//    (:Department {departmentId, name, status})
+//    (:Rule)-[:ONLY_IN]->(:Department)      правило действует только в перечисленных
+//    (:Rule)-[:EXCEPT_IN {status, basis, note}]->(:Department)
+//                                           правило в подразделении не применяется;
+//                                           status: active | candidate,
+//                                           basis — пункт приказа, вводящий исключение
+//    Правило без ONLY_IN действует для всех.
+//
 //  ------------------------------------------------------------
 //  ДАННЫЕ ЗДЕСЬ НЕ ХРАНЯТСЯ ВРУЧНУЮ.
 //
@@ -21,7 +30,7 @@
 //
 //      docker compose exec api python export_graph.py --output /init/seed.cypher
 //
-//  Скрипт выгружает приказы, пункты, правила, атрибуты и примеры
+//  Скрипт выгружает приказы, пункты, правила, атрибуты, примеры и подразделения
 //  в идемпотентный MERGE-скрипт, который дописывается ниже этого
 //  комментария. После этого `docker compose up` воспроизводит граф
 //  один в один, а diff в git показывает, что именно изменилось
@@ -53,6 +62,9 @@ FOR (t:CheckTarget) REQUIRE t.name IS UNIQUE;
 
 CREATE CONSTRAINT example_id IF NOT EXISTS
 FOR (e:ViolationExample) REQUIRE e.exampleId IS UNIQUE;
+
+CREATE CONSTRAINT department_id IF NOT EXISTS
+FOR (d:Department) REQUIRE d.departmentId IS UNIQUE;
 
 CREATE FULLTEXT INDEX rule_description_ft IF NOT EXISTS
 FOR (r:Rule) ON EACH [r.description];

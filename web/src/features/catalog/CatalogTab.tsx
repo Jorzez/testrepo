@@ -128,6 +128,23 @@ function RuleItem({ rule }: { rule: Rule }) {
             {rule.targets.map((t) => <Chip key={t}>{t}</Chip>)}
             <button className="btn sm ghost" onClick={actions.ruleTargets(rule)}>атрибуты…</button>
           </div>
+          <div className="targets">
+            {rule.onlyIn.length > 0 && <>
+              <span className="dim">только в:</span>
+              {rule.onlyIn.map((d) => <Chip key={d.departmentId}>{d.name || d.departmentId}</Chip>)}
+            </>}
+            {rule.exceptions.length > 0 && <>
+              <span className="dim">не применяется в:</span>
+              {rule.exceptions.map((e) => (
+                <Chip key={e.departmentId}>
+                  {e.name || e.departmentId}
+                  {e.status === "active" ? (e.basis ? ` · ${e.basis}` : "") : " · кандидат"}
+                </Chip>
+              ))}
+            </>}
+            {!rule.onlyIn.length && !rule.exceptions.length && <span className="dim">для всех подразделений</span>}
+            <button className="btn sm ghost" onClick={actions.ruleScope(rule)}>подразделения…</button>
+          </div>
           {rule.examples.length
             ? <div className="examples">{rule.examples.map((e) => <ExampleRow key={e.nodeId} example={e} />)}</div>
             : <div className="dim" style={{ marginTop: 8 }}>Примеров нет — в ответе проверки поле examples будет пустым.</div>}

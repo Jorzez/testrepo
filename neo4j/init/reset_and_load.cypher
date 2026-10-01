@@ -44,6 +44,9 @@ FOR (t:CheckTarget) REQUIRE t.name IS UNIQUE;
 CREATE CONSTRAINT example_id IF NOT EXISTS
 FOR (e:ViolationExample) REQUIRE e.exampleId IS UNIQUE;
 
+CREATE CONSTRAINT department_id IF NOT EXISTS
+FOR (d:Department) REQUIRE d.departmentId IS UNIQUE;
+
 CREATE FULLTEXT INDEX rule_description_ft IF NOT EXISTS
 FOR (r:Rule) ON EACH [r.description];
 
@@ -51,7 +54,7 @@ FOR (r:Rule) ON EACH [r.description];
 // Удаляются ВСЕ узлы базы. Если в базе есть что-то помимо каталога,
 // замените строку ниже на выборочную:
 //   MATCH (n) WHERE n:Order OR n:Clause OR n:Rule
-//              OR n:CheckTarget OR n:ViolationExample DETACH DELETE n;
+//              OR n:CheckTarget OR n:ViolationExample OR n:Department DETACH DELETE n;
 // Для очень большой базы удаляйте партиями:
 //   CALL { MATCH (n) DETACH DELETE n } IN TRANSACTIONS OF 10000 ROWS;
 MATCH (n) DETACH DELETE n;
@@ -190,4 +193,23 @@ MERGE (r)-[:HAS_EXAMPLE]->(e);
 //  6) Перекрёстная ссылка между пунктами (на проверку не влияет):
 //     MATCH (a:Clause {clauseId: "PR-01/3.2"}), (b:Clause {clauseId: "PR-01/1.1"})
 //     MERGE (a)-[:REFERENCES]->(b);
+//
+//  7) Подразделение. departmentId — идентификатор, который кадровая
+//     система передаёт в запросе проверки (department_id):
+//     MERGE (d:Department {departmentId: "UCT"})
+//     SET d.name = "УЦТ", d.status = "active";
+//
+//  8) Правило действует только в перечисленных подразделениях
+//     (без таких связей правило действует для всех):
+//     MATCH (r:Rule {ruleId: "R-1.1"}), (d:Department)
+//     WHERE d.departmentId IN ["UCT", "AGD"]
+//     MERGE (r)-[:ONLY_IN]->(d);
+//
+//  9) Исключение: правило в подразделении не применяется. basis — пункт
+//     приказа, который вводит исключение, он попадает в ответ проверки.
+//     status = "candidate" — договорённость ещё не утверждена владельцем
+//     приказа и в вердикте не участвует; "active" — действует:
+//     MATCH (r:Rule {ruleId: "R-2.4"}), (d:Department {departmentId: "FIN"})
+//     MERGE (r)-[x:EXCEPT_IN]->(d)
+//     SET x.status = "active", x.basis = "ПР-01 п. 2.5";
 // ============================================================

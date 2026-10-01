@@ -47,6 +47,12 @@ def get_clauses_flat():
     return {"clauses": _handle(catalog.list_clauses_flat)}
 
 
+@router.get("/departments")
+def get_departments(include_archived: bool = Query(False)):
+    """Подразделения и правила, чью область действия они задают."""
+    return {"departments": _handle(catalog.list_departments, include_archived)}
+
+
 @router.get("/diagnostics")
 def get_diagnostics():
     """Развёрнутая диагностика графа с указанием конкретных узлов."""
@@ -124,12 +130,24 @@ def post_check_target(body: schemas.CheckTargetCreate):
     return _handle(catalog.create_check_target, body.name, body.description)
 
 
+@router.post("/departments", status_code=201)
+def post_department(body: schemas.DepartmentCreate):
+    return _handle(catalog.create_department, body.departmentId, body.name)
+
+
 # -------------------------------- связи -------------------------------------
 
 
 @router.put("/rules/{node_id}/targets")
 def put_rule_targets(node_id: str, body: schemas.RuleTargets):
     return {"targets": _handle(catalog.set_rule_targets, node_id, body.targets)}
+
+
+@router.put("/rules/{node_id}/departments")
+def put_rule_departments(node_id: str, body: schemas.RuleScope):
+    """Область действия правила: «действует только в» и исключения."""
+    return _handle(catalog.set_rule_scope, node_id, body.only,
+                   [e.model_dump() for e in body.exceptions])
 
 
 @router.put("/clauses/{node_id}/references")

@@ -16,6 +16,22 @@ export interface Example extends Extra {
   isViolation?: boolean;
 }
 
+export interface DepartmentRef {
+  departmentId: string;
+  name: string | null;
+}
+
+export type ExceptionStatus = "active" | "candidate";
+
+/** Исключение: правило в подразделении не применяется. */
+export interface RuleException extends DepartmentRef {
+  /** candidate — ждёт утверждения владельцем приказа и в вердикте не участвует. */
+  status: ExceptionStatus | null;
+  /** Пункт приказа, который вводит исключение. */
+  basis: string | null;
+  note: string | null;
+}
+
 export interface Rule extends Extra {
   nodeId: string;
   status: Status;
@@ -24,6 +40,9 @@ export interface Rule extends Extra {
   description?: string;
   checkInstruction?: string;
   targets: string[];
+  /** Действует только в этих подразделениях; пусто — для всех. */
+  onlyIn: DepartmentRef[];
+  exceptions: RuleException[];
   examples: Example[];
 }
 
@@ -60,6 +79,15 @@ export interface CheckTarget extends Extra {
   rules: string[];
 }
 
+export interface Department extends Extra {
+  nodeId: string;
+  status: Status;
+  departmentId?: string;
+  name: string;
+  onlyRules: string[];
+  exceptRules: { ruleId: string; status: ExceptionStatus | null }[];
+}
+
 export interface FlatClause {
   nodeId: string;
   code: string;
@@ -78,7 +106,7 @@ export interface Descendants {
   examples: number;
 }
 
-export type NodeKind = "Order" | "Clause" | "Rule" | "ViolationExample" | "CheckTarget";
+export type NodeKind = "Order" | "Clause" | "Rule" | "ViolationExample" | "CheckTarget" | "Department";
 
 export interface IssueItem {
   label: string;
@@ -113,7 +141,7 @@ export interface RepairReport {
 
 export type CheckStatus = "ALLOWED" | "VIOLATIONS_FOUND" | "NEEDS_MANUAL_REVIEW";
 
-export interface Violation {
+interface ViolationBase {
   order_number: string | null;
   order_title: string | null;
   clause_code: string | null;
@@ -127,11 +155,25 @@ export interface Violation {
   examples: (string | null)[];
 }
 
+export interface Violation extends ViolationBase {
+  /** Неутверждённое исключение для подразделения: нарушение остаётся. */
+  candidate_exception: { basis: string | null; note: string | null } | null;
+}
+
+/** Нарушение, снятое утверждённым исключением для подразделения. */
+export interface Exemption extends ViolationBase {
+  basis: string | null;
+  note: string | null;
+}
+
 export interface CheckResult {
   goal: string;
   status: CheckStatus;
   allowed: boolean;
+  /** null — подразделение не передано или неизвестно: применены все правила. */
+  department: { id: string; name: string } | null;
   detected_attributes: string[];
   violations: Violation[];
+  exemptions: Exemption[];
   notes: string[];
 }

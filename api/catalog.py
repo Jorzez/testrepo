@@ -25,6 +25,9 @@ ACTIVE_STATUS = "active"
 ARCHIVED_STATUS = "archived"
 STATUSES = (ACTIVE_STATUS, ARCHIVED_STATUS)
 RULE_TYPES = ("PROHIBITION", "REQUIREMENT")
+# Исключение-кандидат — договорённость, ещё не утверждённая владельцем приказа:
+# в графе оно есть, но в вердикте не участвует (см. agent.split_exceptions).
+EXCEPTION_STATUSES = ("active", "candidate")
 
 # Метка -> бизнес-ключ. Ключ нужен выгрузке (export_graph.py строит по нему MERGE),
 # поэтому его отсутствие — чинимая проблема, а не повод ломаться.
@@ -34,6 +37,7 @@ BUSINESS_KEYS = {
     "Rule": "ruleId",
     "CheckTarget": "name",
     "ViolationExample": "exampleId",
+    "Department": "departmentId",
 }
 
 # Свойства, которые нельзя менять через редактор произвольных свойств:
@@ -151,6 +155,22 @@ MATCH (a:Clause)-[:REFERENCES]->(b:Clause)
 RETURN elementId(a) AS parent, elementId(b) AS nodeId,
        coalesce(b.code, b.clauseId, '?') AS code
 """
+# Область действия правила по подразделениям: ONLY_IN — действует только в,
+# EXCEPT_IN — не применяется в (со статусом и основанием на самой связи).
+Q_RULE_DEPARTMENTS = """
+MATCH (r:Rule)-[x:ONLY_IN|EXCEPT_IN]->(d:Department)
+RETURN elementId(r) AS parent, type(x) AS kind,
+       d.departmentId AS departmentId, d.name AS name,
+       x.status AS status, x.basis AS basis, x.note AS note
+ORDER BY departmentId
+"""
+Q_DEPARTMENTS = "MATCH (d:Department) RETURN elementId(d) AS nodeId, properties(d) AS props"
+Q_DEPARTMENT_LINKS = """
+MATCH (r:Rule)-[x:ONLY_IN|EXCEPT_IN]->(d:Department)
+RETURN elementId(d) AS parent, type(x) AS kind,
+       coalesce(r.ruleId, '(без ruleId)') AS ruleId, x.status AS status
+ORDER BY ruleId
+"""
 Q_TARGETS = """
 MATCH (t:CheckTarget)
 OPTIONAL MATCH (r:Rule)-[:APPLIES_TO]->(t)
@@ -178,14 +198,25 @@ def build_tree(include_archived: bool = False) -> dict[str, Any]:
     rule_targets = _group(_run(Q_RULE_TARGETS))
     examples = _group(_run(Q_EXAMPLES))
     refs = _group(_run(Q_CLAUSE_REFS))
+    rule_departments = _group(_run(Q_RULE_DEPARTMENTS))
 
     def build_rule(row: dict) -> dict:
         props = _props(row["props"])
+        scope = rule_departments.get(row["nodeId"], [])
         return {
             **props,
             "nodeId": row["nodeId"],
             "status": _status_of(props),
             "targets": sorted(t["name"] for t in rule_targets.get(row["nodeId"], [])),
+            "onlyIn": [
+                {"departmentId": d["departmentId"], "name": d["name"]}
+                for d in scope if d["kind"] == "ONLY_IN"
+            ],
+            "exceptions": [
+                {"departmentId": d["departmentId"], "name": d["name"],
+                 "status": d["status"], "basis": d["basis"], "note": d["note"]}
+                for d in scope if d["kind"] == "EXCEPT_IN"
+            ],
             "examples": [
                 {**_props(e["props"]), "nodeId": e["nodeId"], "status": _status_of(_props(e["props"]))}
                 for e in examples.get(row["nodeId"], [])
@@ -246,6 +277,28 @@ def list_check_targets(include_archived: bool = False) -> list[dict[str, Any]]:
             "rules": sorted(r for r in row["rules"] if r),
         })
     result.sort(key=lambda t: str(t.get("name") or ""))
+    return result
+
+
+def list_departments(include_archived: bool = False) -> list[dict[str, Any]]:
+    """Подразделения со списком правил, чью область действия они задают."""
+    links = _group(_run(Q_DEPARTMENT_LINKS))
+    result = []
+    for row in _run(Q_DEPARTMENTS):
+        props = _props(row["props"])
+        if not _keep(props, include_archived):
+            continue
+        own = links.get(row["nodeId"], [])
+        result.append({
+            **props,
+            "nodeId": row["nodeId"],
+            "name": props.get("name") or "",
+            "status": _status_of(props),
+            "onlyRules": [l["ruleId"] for l in own if l["kind"] == "ONLY_IN"],
+            "exceptRules": [{"ruleId": l["ruleId"], "status": l["status"]}
+                            for l in own if l["kind"] == "EXCEPT_IN"],
+        })
+    result.sort(key=lambda d: str(d.get("departmentId") or ""))
     return result
 
 
@@ -365,6 +418,25 @@ def delete_node(node_id: str, cascade: bool = True, force: bool = False) -> dict
         if rules:
             raise Conflict(
                 "Атрибут используется правилами: " + ", ".join(rules) + ". Сначала отвяжите его."
+            )
+        _run("MATCH (n) WHERE elementId(n) = $node_id DETACH DELETE n", node_id=node_id)
+        return {"deleted": node_id}
+
+    if "Department" in labels:
+        if not force:
+            _assert_archived(node, "подразделение")
+        # Без подразделения ограничение ONLY_IN исчезло бы вместе со связью,
+        # и правило молча стало бы действовать для всех.
+        used = _run(
+            "MATCH (r:Rule)-[:ONLY_IN|EXCEPT_IN]->(d) WHERE elementId(d) = $node_id "
+            "RETURN DISTINCT coalesce(r.ruleId, '(без ruleId)') AS rule_id",
+            node_id=node_id,
+        )
+        if used:
+            raise Conflict(
+                "Подразделение задаёт область действия правил: "
+                + ", ".join(r["rule_id"] for r in used)
+                + ". Сначала уберите его из этих правил."
             )
         _run("MATCH (n) WHERE elementId(n) = $node_id DETACH DELETE n", node_id=node_id)
         return {"deleted": node_id}
@@ -536,6 +608,23 @@ def create_check_target(name: str, description: str = "") -> dict[str, Any]:
     return {"nodeId": row["nodeId"], **_props(row["props"])}
 
 
+def create_department(department_id: str, name: str) -> dict[str, Any]:
+    """Заводит подразделение. Идентификатор — тот, что придёт в запросе проверки."""
+    department_id = department_id.strip()
+    if _one("MATCH (d:Department {departmentId: $id}) RETURN d.departmentId AS id",
+            id=department_id):
+        raise Conflict(f"Подразделение с идентификатором {department_id!r} уже существует")
+    row = _one(
+        """
+        CREATE (d:Department {departmentId: $id, name: $name, status: $status})
+        RETURN elementId(d) AS nodeId, properties(d) AS props
+        """,
+        id=department_id, name=name.strip(), status=ACTIVE_STATUS,
+    )
+    log.info("Создано подразделение %s", department_id)
+    return {"nodeId": row["nodeId"], **_props(row["props"])}
+
+
 # --------------------------------------------------------------------------
 #  Связи
 # --------------------------------------------------------------------------
@@ -562,6 +651,75 @@ def set_rule_targets(rule_node_id: str, targets: list[str]) -> list[str]:
         )
     log.info("Правило %s теперь применяется к %s", rule_node_id, targets)
     return targets
+
+
+def set_rule_scope(rule_node_id: str, only: list[str],
+                   exceptions: list[dict[str, Any]]) -> dict[str, Any]:
+    """Полностью заменяет область действия правила по подразделениям.
+
+    only       — departmentId, в которых правило действует; пусто — для всех.
+    exceptions — [{departmentId, status, basis, note}]: где правило не применяется.
+    Утверждённому исключению нужно основание — код пункта приказа, который
+    его вводит: именно он попадает в ответ проверки.
+    """
+    _fetch_node(rule_node_id, "Rule")
+    known = {d["id"] for d in _run("MATCH (d:Department) RETURN d.departmentId AS id")}
+    excepted = [e["departmentId"] for e in exceptions]
+
+    unknown = sorted({d for d in [*only, *excepted] if d not in known})
+    if unknown:
+        raise NotFound("Нет таких подразделений: " + ", ".join(unknown))
+    repeated = sorted({d for d in only if only.count(d) > 1}
+                      | {d for d in excepted if excepted.count(d) > 1})
+    if repeated:
+        raise Conflict("Подразделение указано дважды: " + ", ".join(repeated))
+    both = sorted(set(only) & set(excepted))
+    if both:
+        raise Conflict(
+            "Подразделение не может быть одновременно в «действует только в» "
+            "и в исключениях: " + ", ".join(both)
+        )
+
+    cleaned = []
+    for item in exceptions:
+        status = item.get("status") or "candidate"
+        if status not in EXCEPTION_STATUSES:
+            raise Conflict(f"Недопустимый статус исключения {status!r}, "
+                           f"ожидался один из {EXCEPTION_STATUSES}")
+        basis = (item.get("basis") or "").strip() or None
+        if status == "active" and not basis:
+            raise Conflict(
+                f"Исключению для {item['departmentId']} нужно основание — код пункта "
+                "приказа, который его вводит. Без основания оно может быть только кандидатом."
+            )
+        cleaned.append({"departmentId": item["departmentId"], "status": status,
+                        "basis": basis, "note": (item.get("note") or "").strip() or None})
+
+    _run("MATCH (r)-[rel:ONLY_IN|EXCEPT_IN]->() WHERE elementId(r) = $id DELETE rel",
+         id=rule_node_id)
+    if only:
+        _run(
+            """
+            MATCH (r:Rule) WHERE elementId(r) = $id
+            UNWIND $only AS dep
+            MATCH (d:Department {departmentId: dep})
+            MERGE (r)-[:ONLY_IN]->(d)
+            """,
+            id=rule_node_id, only=only,
+        )
+    if cleaned:
+        _run(
+            """
+            MATCH (r:Rule) WHERE elementId(r) = $id
+            UNWIND $exceptions AS ex
+            MATCH (d:Department {departmentId: ex.departmentId})
+            MERGE (r)-[x:EXCEPT_IN]->(d)
+            SET x.status = ex.status, x.basis = ex.basis, x.note = ex.note
+            """,
+            id=rule_node_id, exceptions=cleaned,
+        )
+    log.info("Правило %s: только в %s, исключения %s", rule_node_id, only, cleaned)
+    return {"only": only, "exceptions": cleaned}
 
 
 def set_clause_references(clause_node_id: str, target_node_ids: list[str]) -> list[str]:
@@ -660,7 +818,8 @@ def repair_identifiers() -> dict[str, Any]:
     """))
 
     report["statuses"] = len(_run("""
-        MATCH (n) WHERE (n:Order OR n:Clause OR n:Rule OR n:CheckTarget OR n:ViolationExample)
+        MATCH (n) WHERE (n:Order OR n:Clause OR n:Rule OR n:CheckTarget OR n:ViolationExample
+                         OR n:Department)
           AND n.status IS NULL
         SET n.status = 'active'
         RETURN elementId(n) AS id

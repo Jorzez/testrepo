@@ -1,4 +1,4 @@
-"""Схемы запросов для CRUD-эндпоинтов каталога."""
+"""Схемы запросов для CRUD-эндпоинтов каталога и пакетной проверки."""
 
 from typing import Any, Literal, Optional
 
@@ -53,8 +53,38 @@ class CheckTargetCreate(BaseModel):
     description: str = Field("", max_length=4000)
 
 
+class DepartmentCreate(BaseModel):
+    departmentId: str = Field(..., min_length=1, max_length=100,
+                              description="Идентификатор, который передаётся в запросе проверки")
+    name: str = Field(..., min_length=1, max_length=500)
+
+
 class RuleTargets(BaseModel):
     targets: list[str]
+
+
+ExceptionStatus = Literal["active", "candidate"]
+
+
+class RuleException(BaseModel):
+    """Исключение: правило не применяется в подразделении."""
+
+    departmentId: str = Field(..., min_length=1)
+    status: ExceptionStatus = Field(
+        "candidate",
+        description="candidate — ждёт утверждения владельцем приказа и в вердикте "
+                    "не участвует; active — действует",
+    )
+    basis: Optional[str] = Field(None, max_length=200,
+                                 description="Код пункта приказа, который вводит исключение")
+    note: Optional[str] = Field(None, max_length=2000)
+
+
+class RuleScope(BaseModel):
+    """Область действия правила по подразделениям. Пустые списки — правило для всех."""
+
+    only: list[str] = Field(default_factory=list, description="departmentId: действует только в")
+    exceptions: list[RuleException] = Field(default_factory=list)
 
 
 class ClauseReferences(BaseModel):
@@ -69,4 +99,8 @@ class GoalItem(BaseModel):
     """Одна цель в пакетной проверке."""
 
     goal: str = Field(..., min_length=1, description="Формулировка цели")
+    # В пакете поле обязательно: вызывающая кадровая система подразделение знает.
+    # Неизвестный графу идентификатор пакет не роняет — см. agent.resolve_department.
+    department_id: str = Field(..., min_length=1,
+                               description="Идентификатор подразделения (Department.departmentId)")
     id: Optional[str] = Field(None, description="Идентификатор вызывающей системы; возвращается как есть")

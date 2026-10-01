@@ -1,5 +1,5 @@
 import { api } from "../api/client";
-import type { CheckTarget, Clause, Example, Order, Rule, RuleType, Status } from "../api/types";
+import type { CheckTarget, Clause, Department, Example, Order, Rule, RuleType, Status } from "../api/types";
 import { useCatalog } from "../state/catalog";
 import { findOrderOf } from "../state/tree";
 import { Chip } from "../ui/common";
@@ -7,6 +7,7 @@ import { useDialogs, type Option } from "../ui/Dialogs";
 import type { MenuItem } from "../ui/Menu";
 import { errorText, useToast } from "../ui/Toasts";
 import { usePropertiesEditor } from "./PropertiesDialog";
+import { useRuleScopeEditor } from "./RuleScopeDialog";
 
 /* Все операции над узлами каталога. Каждая либо открывает форму, либо
    спрашивает подтверждение, а после изменения перечитывает данные. */
@@ -24,6 +25,7 @@ export function useActions() {
   const { openForm, confirm } = useDialogs();
   const toast = useToast();
   const editProperties = usePropertiesEditor();
+  const editRuleScope = useRuleScopeEditor();
 
   /** Ошибки действий, не прошедших через форму, показываются уведомлением. */
   const run = (fn: () => Promise<unknown>) => () => { fn().catch((err) => toast(errorText(err), "err")); };
@@ -234,9 +236,12 @@ export function useActions() {
     });
   };
 
+  const ruleScope = (r: Rule) => () => editRuleScope(r);
+
   const ruleMenu = (r: Rule): MenuItem[] => [
     { label: "Изменить", run: editRule(r) },
     { label: "Атрибуты", run: ruleTargets(r) },
+    { label: "Подразделения", run: ruleScope(r) },
     { label: "Создать пример", run: addExample(r) },
     { label: "Свойства", run: props(r.nodeId) },
     { label: "Перенести", run: moveRule(r) },
@@ -309,8 +314,39 @@ export function useActions() {
     ...statusItems(t, t),
   ];
 
+  // ----------------------------- подразделения ------------------------------
+
+  const addDepartment = () => openForm({
+    title: "Новое подразделение", submitLabel: "Создать",
+    fields: [
+      { name: "departmentId", label: "Идентификатор", required: true, placeholder: "UCT",
+        hint: "Тот, что кадровая система передаёт в запросе проверки как department_id." },
+      { name: "name", label: "Название", required: true, placeholder: "УЦТ" },
+    ],
+    onSubmit: (v) => mutate(() => api.createDepartment({
+      departmentId: str(v.departmentId), name: str(v.name),
+    }), "Подразделение создано"),
+  });
+
+  const editDepartment = (d: Department) => () => openForm({
+    title: "Подразделение " + (d.name || d.departmentId || ""),
+    fields: [
+      { name: "departmentId", label: "Идентификатор", value: d.departmentId ?? "", required: true,
+        hint: "Смена идентификатора не рвёт связи с правилами, но запросы проверки должны передавать новый." },
+      { name: "name", label: "Название", value: d.name, required: true },
+    ],
+    onSubmit: (v) => mutate(() => api.patch(d.nodeId, v), "Подразделение обновлено"),
+  });
+
+  const departmentMenu = (d: Department): MenuItem[] => [
+    { label: "Изменить", run: editDepartment(d) },
+    { label: "Свойства", run: props(d.nodeId) },
+    ...statusItems(d),
+  ];
+
   return {
-    addOrder, addTarget, orderMenu, clauseMenu, ruleMenu, targetMenu, ruleTargets,
+    addOrder, addTarget, addDepartment, orderMenu, clauseMenu, ruleMenu, targetMenu, departmentMenu,
+    ruleTargets, ruleScope,
     editExample, deleteExample, props, archive, restore,
   };
 }

@@ -4,7 +4,8 @@
   1. Словарь проверяемых атрибутов берётся из графа (:CheckTarget) —
      единственный источник истины, промпт строится из него же.
   2. Языковая модель определяет, какие атрибуты присутствуют в цели.
-  3. Cypher-запросы находят сработавшие запреты и невыполненные требования.
+  3. Cypher-запросы находят сработавшие запреты и невыполненные требования
+     с учётом подразделения, чья цель проверяется.
 
 Режим отказа — fail-closed: если извлечение атрибутов не удалось
 (модель недоступна, вернула мусор), цель НЕ считается разрешённой,
@@ -15,7 +16,13 @@
 графом («срок исполнения» против «срок_исполнения») не должно
 превращаться в ложное нарушение. О таких расхождениях и об атрибутах,
 которых нет в графе, сообщается в поле notes.
+
+Разграничение по подразделениям хранится в графе (см. graph.py). Если
+подразделение не передано или неизвестно графу, применяются все правила —
+тот же отказ в сторону строгости, — а причина пишется в notes.
 """
+
+from __future__ import annotations
 
 import json
 import logging
@@ -28,7 +35,7 @@ from typing import Any, Optional
 
 from openai import OpenAI
 
-from graph import find_violations, get_check_targets
+from graph import find_violations, get_check_targets, get_departments
 from naming import normalize_name
 
 log = logging.getLogger(__name__)
@@ -265,15 +272,74 @@ def duplicate_notes(targets: list[dict[str, str]]) -> list[str]:
     return notes
 
 
+ALL_RULES_APPLIED = (
+    "применены все правила, включая действующие только в отдельных "
+    "подразделениях; исключения не учитывались."
+)
+
+EXCEPTION_ACTIVE = "active"
+EXCEPTION_CANDIDATE = "candidate"
+
+
+def resolve_department(
+    department_id: Optional[str], departments: dict[str, dict[str, str]]
+) -> tuple[Optional[dict[str, str]], list[str]]:
+    """Находит подразделение в справочнике графа.
+
+    Возвращает (подразделение или None, заметки). None означает, что
+    разграничение применить нельзя и проверка пойдёт по всем правилам:
+    молча выбрать «мягкий» набор правил для неизвестного подразделения
+    было бы отказом в сторону разрешения.
+    """
+    key = (department_id or "").strip()
+    if not key:
+        return None, ["Подразделение не передано: " + ALL_RULES_APPLIED]
+    found = departments.get(key)
+    if not found:
+        return None, [f'Подразделения "{key}" нет в графе (:Department): ' + ALL_RULES_APPLIED]
+    if found.get("status") != "active":
+        return None, [f'Подразделение "{key}" находится в архиве: ' + ALL_RULES_APPLIED]
+    return {"id": found["id"], "name": found.get("name") or ""}, []
+
+
+def split_exceptions(
+    rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Делит найденное на нарушения и снятые исключением.
+
+    Утверждённое исключение снимает нарушение и уходит в exemptions вместе
+    с основанием — пунктом приказа, который его вводит. Кандидат в вердикте
+    не участвует: нарушение остаётся, но помечается candidate_exception,
+    чтобы проверяющий видел, что договорённость ждёт утверждения.
+    """
+    violations: list[dict[str, Any]] = []
+    exemptions: list[dict[str, Any]] = []
+    for row in rows:
+        row = dict(row)
+        status = row.pop("exception_status", None)
+        basis = row.pop("exception_basis", None)
+        note = row.pop("exception_note", None)
+        if status == EXCEPTION_ACTIVE:
+            exemptions.append({**row, "basis": basis, "note": note})
+            continue
+        row["candidate_exception"] = (
+            {"basis": basis, "note": note} if status == EXCEPTION_CANDIDATE else None
+        )
+        violations.append(row)
+    return violations, exemptions
+
+
 def check_goal(
     goal: str,
     targets: list[dict[str, str]] | None = None,
     notes_prefix: list[str] | None = None,
+    department_id: Optional[str] = None,
+    departments: dict[str, dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     """Проверяет цель. Всегда возвращает словарь, никогда не бросает исключений LLM.
 
-    targets и notes_prefix можно передать снаружи, чтобы не перечитывать
-    словарь атрибутов на каждую цель пакета.
+    targets, notes_prefix и departments можно передать снаружи, чтобы не
+    перечитывать словари графа на каждую цель пакета.
     """
     if targets is None:
         targets = get_check_targets()
@@ -287,8 +353,10 @@ def check_goal(
             "goal": goal,
             "status": STATUS_MANUAL_REVIEW,
             "allowed": False,
+            "department": None,
             "detected_attributes": [],
             "violations": [],
+            "exemptions": [],
             "notes": [
                 "Не удалось автоматически проанализировать формулировку цели. "
                 "Требуется ручная проверка.",
@@ -296,28 +364,38 @@ def check_goal(
             ],
         }
 
-    violations = find_violations(extraction.attributes)
+    if departments is None:
+        departments = get_departments()
+    department, department_notes = resolve_department(department_id, departments)
+
+    violations, exemptions = split_exceptions(
+        find_violations(extraction.attributes, department["id"] if department else None)
+    )
 
     # Дубликаты означают, что часть правил висит на «двойниках»
     # и результат проверки может быть неполным.
-    notes = list(extraction.warnings) + list(
-        notes_prefix if notes_prefix is not None else duplicate_notes(targets)
+    notes = (
+        list(extraction.warnings)
+        + department_notes
+        + list(notes_prefix if notes_prefix is not None else duplicate_notes(targets))
     )
 
     return {
         "goal": goal,
         "status": STATUS_ALLOWED if not violations else STATUS_VIOLATIONS,
         "allowed": not violations,
+        "department": department,
         "detected_attributes": extraction.attributes,
         "violations": violations,
+        "exemptions": exemptions,
         "notes": notes,
     }
 
 
 def check_goals(items: list[dict[str, Any]]) -> dict[str, Any]:
-    """Пакетная проверка. На вход [{"goal": "...", "id": "..."}, ...].
+    """Пакетная проверка. На вход [{"goal": "...", "id": "...", "department_id": "..."}, ...].
 
-    Словарь атрибутов читается один раз на весь пакет; обращения к модели
+    Словари атрибутов и подразделений читаются один раз на весь пакет; обращения к модели
     идут параллельно, потому что именно они — узкое место. Порядок ответов
     совпадает с порядком входа, id возвращается как передан.
     """
@@ -327,10 +405,12 @@ def check_goals(items: list[dict[str, Any]]) -> dict[str, Any]:
 
     targets = get_check_targets()
     notes = duplicate_notes(targets)
+    departments = get_departments()
     log.info("Пакетная проверка: целей=%d, потоков=%d", len(items), BULK_MAX_WORKERS)
 
     def one(item: dict[str, Any]) -> dict[str, Any]:
-        return {"id": item.get("id"), **check_goal(item["goal"], targets, notes)}
+        return {"id": item.get("id"), **check_goal(
+            item["goal"], targets, notes, item.get("department_id"), departments)}
 
     workers = min(BULK_MAX_WORKERS, len(items))
     with ThreadPoolExecutor(max_workers=workers) as pool:

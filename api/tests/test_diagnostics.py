@@ -131,3 +131,68 @@ def test_problems_are_flat_strings_for_ready(db):
     db.rows[diagnostics.Q_TARGET_USAGE] = [{"name": "измеримость", "rule_count": 1}]
     report = diagnostics.collect()
     assert report["problems"] and all(isinstance(p, str) for p in report["problems"])
+
+
+# ------------------------------ подразделения -------------------------------
+
+
+def _scope(rule="R-1.1", kind="EXCEPT_IN", status=None, basis=None,
+           department="УЦТ", department_status="active", node=RULE):
+    return {"nodeId": node, "rule": rule, "kind": kind, "status": status, "basis": basis,
+            "department": department, "departmentStatus": department_status}
+
+
+def test_candidate_exceptions_are_reported_but_do_not_block(db):
+    _healthy(db)
+    db.rows[diagnostics.Q_RULE_SCOPE] = [_scope(status="candidate")]
+    report = diagnostics.collect()
+    issue = next(i for i in report["issues"] if i["code"] == "exception_candidates")
+    assert issue["severity"] == "info"
+    assert issue["items"][0] == {"label": "R-1.1 — УЦТ", "nodeId": RULE, "kind": "Rule"}
+    assert report["ready"] is True
+
+
+def test_active_exception_without_basis_is_a_warning(db):
+    """Без основания в ответе проверки не видно, какой пункт вводит исключение."""
+    _healthy(db)
+    db.rows[diagnostics.Q_RULE_SCOPE] = [
+        _scope(status="active", basis="  "), _scope(rule="R-2.4", status="active", basis="4.2")]
+    report = diagnostics.collect()
+    issue = next(i for i in report["issues"] if i["code"] == "exceptions_without_basis")
+    assert [i["label"] for i in issue["items"]] == ["R-1.1 — УЦТ"]
+    assert report["ready"] is True
+
+
+def test_exception_with_unknown_status_is_a_warning(db):
+    _healthy(db)
+    db.rows[diagnostics.Q_RULE_SCOPE] = [_scope(status=None), _scope(rule="R-2", status="approved")]
+    issue = next(i for i in diagnostics.collect()["issues"]
+                 if i["code"] == "exceptions_with_unknown_status")
+    assert len(issue["items"]) == 2
+
+
+def test_rule_limited_to_archived_departments(db):
+    _healthy(db)
+    db.rows[diagnostics.Q_RULE_SCOPE] = [
+        _scope(kind="ONLY_IN", department_status="archived"),
+        _scope(rule="R-2.4", node="4:db:5", kind="ONLY_IN", department_status="archived"),
+        _scope(rule="R-2.4", node="4:db:5", kind="ONLY_IN", department="АГД"),
+    ]
+    issue = next(i for i in diagnostics.collect()["issues"]
+                 if i["code"] == "rules_only_in_archived_departments")
+    assert [i["label"] for i in issue["items"]] == ["R-1.1"], "R-2.4 действует в АГД"
+
+
+def test_department_without_id(db):
+    _healthy(db)
+    db.rows[diagnostics.Q_DEPARTMENTS_WITHOUT_ID] = [{"nodeId": "4:db:9", "label": "УЦТ"}]
+    issue = next(i for i in diagnostics.collect()["issues"] if i["code"] == "departments_without_id")
+    assert issue["items"][0]["kind"] == "Department"
+    assert issue["fix"] is None, "идентификатор задаёт кадровая система, автопочинки нет"
+
+
+def test_plain_scope_raises_no_issues(db):
+    _healthy(db)
+    db.rows[diagnostics.Q_RULE_SCOPE] = [
+        _scope(kind="ONLY_IN"), _scope(rule="R-2.4", status="active", basis="ПР-01 п. 2.5")]
+    assert diagnostics.collect()["issues"] == []

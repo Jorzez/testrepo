@@ -104,9 +104,28 @@ WHERE size(nodes) > 1 AND code IS NOT NULL
 RETURN coalesce(o.number, '?') + ' — пункт ' + code AS label, nodes
 """
 
+# Область действия правил по подразделениям: одна выборка на все проверки.
+Q_RULE_SCOPE = f"""
+MATCH (r:Rule)-[x:ONLY_IN|EXCEPT_IN]->(d:Department)
+WHERE {ACTIVE.format('r')}
+RETURN elementId(r) AS nodeId,
+       coalesce(r.ruleId, '(без ruleId)') AS rule,
+       type(x) AS kind, x.status AS status, x.basis AS basis,
+       coalesce(d.name, d.departmentId, '?') AS department,
+       coalesce(d.status, 'active') AS departmentStatus
+ORDER BY rule, department
+"""
+
+Q_DEPARTMENTS_WITHOUT_ID = """
+MATCH (d:Department)
+WHERE d.departmentId IS NULL OR trim(toString(d.departmentId)) = ''
+RETURN elementId(d) AS nodeId, coalesce(d.name, '(без названия)') AS label
+ORDER BY label
+"""
+
 Q_ARCHIVED = """
 MATCH (n)
-WHERE (n:Order OR n:Clause OR n:Rule OR n:CheckTarget OR n:ViolationExample)
+WHERE (n:Order OR n:Clause OR n:Rule OR n:CheckTarget OR n:ViolationExample OR n:Department)
   AND n.status = 'archived'
 RETURN head(labels(n)) AS kind, count(*) AS total
 """
@@ -114,6 +133,7 @@ RETURN head(labels(n)) AS kind, count(*) AS total
 KIND_NAMES = {
     "Order": "приказ", "Clause": "пункт", "Rule": "правило",
     "CheckTarget": "атрибут", "ViolationExample": "пример",
+    "Department": "подразделение",
 }
 
 
@@ -274,6 +294,77 @@ def collect() -> dict[str, Any]:
             "их невозможно различить.",
             items=[{"label": row["label"], "nodeId": row["nodes"][0], "kind": "Clause"}
                    for row in duplicate_codes],
+        ))
+
+    # Разграничение по подразделениям
+    scope = _run(Q_RULE_SCOPE)
+    exceptions = [row for row in scope if row["kind"] == "EXCEPT_IN"]
+
+    def scope_item(row: dict) -> dict:
+        return {"label": f"{row['rule']} — {row['department']}",
+                "nodeId": row["nodeId"], "kind": "Rule"}
+
+    unknown_status = [row for row in exceptions if row["status"] not in ("active", "candidate")]
+    if unknown_status:
+        issues.append(_issue(
+            "exceptions_with_unknown_status", WARNING,
+            "Исключения с неизвестным статусом",
+            "У связи EXCEPT_IN статус должен быть active или candidate. С любым "
+            "другим значением исключение не применяется — правило в подразделении "
+            "продолжает действовать.",
+            items=[scope_item(row) for row in unknown_status],
+        ))
+
+    without_basis = [row for row in exceptions
+                     if row["status"] == "active" and not (row["basis"] or "").strip()]
+    if without_basis:
+        issues.append(_issue(
+            "exceptions_without_basis", WARNING,
+            "Действующие исключения без основания",
+            "Исключение снимает нарушение, но в ответе проверки не видно, какой "
+            "пункт приказа его вводит. Укажите основание или верните исключение "
+            "в кандидаты.",
+            items=[scope_item(row) for row in without_basis],
+        ))
+
+    only_by_rule: dict[str, list[dict]] = {}
+    for row in scope:
+        if row["kind"] == "ONLY_IN":
+            only_by_rule.setdefault(row["nodeId"], []).append(row)
+    only_archived = [rows[0] for rows in only_by_rule.values()
+                     if all(r["departmentStatus"] == "archived" for r in rows)]
+    if only_archived:
+        issues.append(_issue(
+            "rules_only_in_archived_departments", WARNING,
+            "Правила, ограниченные только архивными подразделениями",
+            "Правило действует только в подразделениях, которые все в архиве. "
+            "Для действующих подразделений оно не применяется никогда.",
+            items=[{"label": row["rule"], "nodeId": row["nodeId"], "kind": "Rule"}
+                   for row in only_archived],
+        ))
+
+    departments_without_id = _run(Q_DEPARTMENTS_WITHOUT_ID)
+    if departments_without_id:
+        issues.append(_issue(
+            "departments_without_id", WARNING,
+            "Подразделения без идентификатора",
+            "departmentId приходит в запросе проверки. Без него на подразделение "
+            "нельзя сослаться: его цели проверяются по всем правилам, а в выгрузку "
+            "seed.cypher оно не попадает. Идентификатор задаёт кадровая система, "
+            "поэтому автоматически он не проставляется.",
+            items=[{"label": d["label"], "nodeId": d["nodeId"], "kind": "Department"}
+                   for d in departments_without_id],
+        ))
+
+    candidates = [row for row in exceptions if row["status"] == "candidate"]
+    if candidates:
+        issues.append(_issue(
+            "exception_candidates", INFO,
+            "Исключения-кандидаты ждут утверждения",
+            "Договорённости внутри подразделений, заведённые как исключения. "
+            "Пока владелец приказа их не утвердил, в вердикте они не участвуют: "
+            "нарушение остаётся, но помечается в ответе проверки.",
+            items=[scope_item(row) for row in candidates],
         ))
 
     # Справка про архив

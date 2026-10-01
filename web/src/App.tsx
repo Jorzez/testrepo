@@ -1,6 +1,7 @@
 import { API_BASE } from "./api/client";
 import { CatalogTab } from "./features/catalog/CatalogTab";
 import { CheckTab } from "./features/check/CheckTab";
+import { DepartmentsTab } from "./features/departments/DepartmentsTab";
 import { HealthTab } from "./features/health/HealthTab";
 import { TargetsTab } from "./features/targets/TargetsTab";
 import { useCatalog, type Tab } from "./state/catalog";
@@ -8,6 +9,7 @@ import { useCatalog, type Tab } from "./state/catalog";
 const TABS: { id: Tab; label: string }[] = [
   { id: "catalog", label: "Приказы и пункты" },
   { id: "targets", label: "Атрибуты" },
+  { id: "departments", label: "Подразделения" },
   { id: "check", label: "Проверка цели" },
   { id: "health", label: "Диагностика" },
 ];
@@ -47,6 +49,7 @@ export function App() {
       <main>
         <CatalogTab hidden={tab !== "catalog"} />
         <TargetsTab hidden={tab !== "targets"} />
+        <DepartmentsTab hidden={tab !== "departments"} />
         <CheckTab hidden={tab !== "check"} />
         <HealthTab hidden={tab !== "health"} />
       </main>

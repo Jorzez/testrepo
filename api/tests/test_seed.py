@@ -88,6 +88,7 @@ def test_seed_declares_constraints_for_all_export_keys():
         ("Rule", "ruleId"),
         ("CheckTarget", "name"),
         ("ViolationExample", "exampleId"),
+        ("Department", "departmentId"),
     ]:
         assert f"({label[0].lower()}:{label})" in text or label in text
         assert key in text, f"нет ограничения по ключу {key}"
@@ -161,6 +162,35 @@ def test_render_relationship():
     )
     assert 'MATCH (a:Rule {ruleId: "R-1.1"})' in cypher
     assert "MERGE (a)-[:APPLIES_TO]->(b);" in cypher
+
+
+def test_render_exception_keeps_status_and_basis():
+    """Статус и основание исключения живут на связи — выгрузка не должна их терять."""
+    cypher = render_relationship(
+        {
+            "a_label": "Rule",
+            "a_props": {"ruleId": "R-2.4"},
+            "rel_type": "EXCEPT_IN",
+            "rel_props": {"status": "active", "basis": "ПР-01 п. 2.5", "note": None},
+            "b_label": "Department",
+            "b_props": {"departmentId": "AGD", "name": "АГД"},
+        }
+    )
+    assert '(b:Department {departmentId: "AGD"})' in cypher
+    assert "MERGE (a)-[x:EXCEPT_IN]->(b)" in cypher
+    assert 'x.basis = "ПР-01 п. 2.5"' in cypher and 'x.status = "active"' in cypher
+    assert "x.note" not in cypher
+
+
+def test_departments_are_exported_before_relationships():
+    block = render_data_block(
+        [("Department", {"departmentId": "UCT", "name": "УЦТ", "status": "active"}),
+         ("Rule", {"ruleId": "R-1.1", "type": "REQUIREMENT"})],
+        [{"a_label": "Rule", "a_props": {"ruleId": "R-1.1"}, "rel_type": "ONLY_IN",
+          "rel_props": {}, "b_label": "Department", "b_props": {"departmentId": "UCT"}}],
+    )
+    assert block.index('MERGE (n:Department {departmentId: "UCT"})') < block.index("ONLY_IN")
+    assert all(SCHEMA_RE.match(s) is None for s in split_statements(block))
 
 
 def test_render_data_block_is_idempotent_cypher():

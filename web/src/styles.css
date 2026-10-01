@@ -1,4 +1,4 @@
-/* Стили перенесены из прежнего web/index.html без изменений. */
+/* Стили перенесены из прежнего web/index.html без изменений; новое — в конце файла. */
 :root{
   --bg:#f6f7f9; --panel:#ffffff; --panel-2:#fbfcfd; --line:#e3e6ea; --line-soft:#eef0f3;
   --ink:#16181d; --ink-2:#5b6472; --ink-3:#8a93a1;
@@ -167,3 +167,11 @@ tr.is-archived{opacity:.6}
   border-radius:50%;animation:spin .7s linear infinite;display:inline-block}
 @keyframes spin{to{transform:rotate(360deg)}}
 .hidden{display:none !important}
+
+/* --- добавлено после переноса: область действия правила по подразделениям --- */
+.scope-row{display:grid;grid-template-columns:minmax(150px,1.4fr) 120px minmax(150px,1.6fr) auto;
+  gap:8px;align-items:start;margin-bottom:10px}
+.scope-row .scope-note{grid-column:1 / 4}
+.optlist input:disabled + span{opacity:.55}
+.exemption{border:1px solid var(--line);border-left:3px solid var(--ok);border-radius:9px;
+  padding:12px 14px;margin-top:11px;background:var(--panel-2)}

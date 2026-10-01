@@ -61,6 +61,32 @@ def verify_connectivity() -> bool:
 # проверок. coalesce нужен для узлов, заведённых до появления status.
 ACTIVE = "coalesce({0}.status, 'active') = 'active'"
 
+# Разграничение по подразделениям — часть приказа, поэтому оно в графе:
+#   (r:Rule)-[:ONLY_IN]->(d:Department)     правило действует только в перечисленных
+#   (r:Rule)-[:EXCEPT_IN]->(d:Department)   правило в подразделении не применяется
+# Правило без ONLY_IN действует для всех. $department_id = null означает
+# «подразделение неизвестно»: тогда применяются все правила без изъятий.
+# Ограничение ONLY_IN учитывается независимо от статуса подразделения:
+# архивирование подразделения не должно молча делать правило всеобщим.
+FOR_DEPARTMENT = """($department_id IS NULL
+       OR NOT (r)-[:ONLY_IN]->(:Department)
+       OR (r)-[:ONLY_IN]->(:Department {departmentId: $department_id}))"""
+
+# Исключение не отбрасывает строку, а возвращается рядом с ней: агент сам
+# решает, что с ним делать. Утверждённое (status = 'active') снимает
+# нарушение и показывает основание, кандидат в вердикте не участвует.
+EXCEPTION_MATCH = """OPTIONAL MATCH (r)-[x:EXCEPT_IN]->(:Department {departmentId: $department_id})"""
+EXCEPTION_RETURN = """x.status             AS exception_status,
+       x.basis              AS exception_basis,
+       x.note               AS exception_note,"""
+
+ALL_DEPARTMENTS = """
+MATCH (d:Department)
+WHERE d.departmentId IS NOT NULL
+RETURN d.departmentId AS id, d.name AS name, coalesce(d.status, 'active') AS status
+ORDER BY id
+"""
+
 ALL_CHECK_TARGETS = f"""
 MATCH (t:CheckTarget)
 WHERE {ACTIVE.format('t')}
@@ -79,6 +105,8 @@ WHERE r.type = 'PROHIBITION'
   AND {ACTIVE.format('c')}
   AND {ACTIVE.format('r')}
   AND {ACTIVE.format('t')}
+  AND {FOR_DEPARTMENT}
+{EXCEPTION_MATCH}
 OPTIONAL MATCH (r)-[:HAS_EXAMPLE]->(e:ViolationExample {{isViolation: true}})
 WHERE {ACTIVE.format('e')}
 RETURN o.number             AS order_number,
@@ -91,6 +119,7 @@ RETURN o.number             AS order_number,
        'PROHIBITION'        AS violation_type,
        t.name               AS attribute,
        'violation'          AS example_kind,
+       {EXCEPTION_RETURN}
        collect(DISTINCT e.text) AS examples
 ORDER BY order_number, clause_code, rule_id, attribute
 """
@@ -106,6 +135,8 @@ WHERE r.type = 'REQUIREMENT'
   AND {ACTIVE.format('c')}
   AND {ACTIVE.format('r')}
   AND {ACTIVE.format('t')}
+  AND {FOR_DEPARTMENT}
+{EXCEPTION_MATCH}
 OPTIONAL MATCH (r)-[:HAS_EXAMPLE]->(e:ViolationExample {{isViolation: false}})
 WHERE {ACTIVE.format('e')}
 RETURN o.number             AS order_number,
@@ -118,6 +149,7 @@ RETURN o.number             AS order_number,
        'MISSING_REQUIREMENT' AS violation_type,
        t.name               AS attribute,
        'correct'            AS example_kind,
+       {EXCEPTION_RETURN}
        collect(DISTINCT e.text) AS examples
 ORDER BY order_number, clause_code, rule_id, attribute
 """
@@ -184,20 +216,29 @@ def get_all_attributes() -> list[str]:
     return [t["name"] for t in get_check_targets()]
 
 
-def find_violations(attributes: list[str]) -> list[dict[str, Any]]:
+def get_departments() -> dict[str, dict[str, str]]:
+    """Справочник подразделений: {departmentId: {'id', 'name', 'status'}}."""
+    with get_driver().session() as session:
+        return {record["id"]: dict(record) for record in session.run(ALL_DEPARTMENTS)}
+
+
+def find_violations(
+    attributes: list[str], department_id: Optional[str] = None
+) -> list[dict[str, Any]]:
     """Все нарушения: сработавшие запреты + невыполненные требования.
 
     Оба набора результатов имеют одинаковый набор ключей; отличить их
     можно по violation_type и example_kind.
+
+    department_id — подразделение, чья цель проверяется. None означает
+    «неизвестно»: применяются все правила, исключения не учитываются.
+    У строк, для которых в подразделении заведено исключение, заполнены
+    exception_status / exception_basis / exception_note.
     """
+    params = {"attributes": attributes, "department_id": department_id}
     with get_driver().session() as session:
-        prohibitions = [
-            dict(r) for r in session.run(FIND_PROHIBITIONS, attributes=attributes)
-        ]
-        missing = [
-            dict(r)
-            for r in session.run(FIND_MISSING_REQUIREMENTS, attributes=attributes)
-        ]
+        prohibitions = [dict(r) for r in session.run(FIND_PROHIBITIONS, **params)]
+        missing = [dict(r) for r in session.run(FIND_MISSING_REQUIREMENTS, **params)]
     log.debug(
         "Найдено нарушений: запретов=%d, невыполненных требований=%d",
         len(prohibitions),

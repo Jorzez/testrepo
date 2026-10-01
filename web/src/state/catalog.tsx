@@ -3,22 +3,24 @@ import {
 } from "react";
 
 import { api } from "../api/client";
-import type { CheckTarget, Diagnostics, FlatClause, NodeKind, Order } from "../api/types";
+import type { CheckTarget, Department, Diagnostics, FlatClause, NodeKind, Order } from "../api/types";
 import { errorText, useToast } from "../ui/Toasts";
 import { findOrderOf } from "./tree";
 
-export type Tab = "catalog" | "targets" | "check" | "health";
+export type Tab = "catalog" | "targets" | "departments" | "check" | "health";
 export type ApiState = "connecting" | "online" | "offline";
 
 interface Data {
   orders: Order[];
   targets: CheckTarget[];
   clauses: FlatClause[];
+  departments: Department[];
 }
 
 interface Flags {
   showArchived: boolean;
   showArchivedTargets: boolean;
+  showArchivedDepartments: boolean;
 }
 
 interface CatalogState extends Data, Flags {
@@ -56,8 +58,10 @@ const toggled = (set: Set<string>, id: string) => {
 
 export function CatalogProvider({ children }: { children: ReactNode }) {
   const toast = useToast();
-  const [data, setData] = useState<Data>({ orders: [], targets: [], clauses: [] });
-  const [flags, setFlags] = useState<Flags>({ showArchived: false, showArchivedTargets: false });
+  const [data, setData] = useState<Data>({ orders: [], targets: [], clauses: [], departments: [] });
+  const [flags, setFlags] = useState<Flags>({
+    showArchived: false, showArchivedTargets: false, showArchivedDepartments: false,
+  });
   const flagsRef = useRef(flags);
   const [apiState, setApiState] = useState<ApiState>("connecting");
   const [health, setHealth] = useState<Diagnostics["counts"] | null>(null);
@@ -76,10 +80,14 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
     setFlags(next);
     let loaded: Data | null = null;
     try {
-      const [tree, targets, clauses] = await Promise.all([
+      const [tree, targets, clauses, departments] = await Promise.all([
         api.tree(next.showArchived), api.checkTargets(next.showArchivedTargets), api.clauses(),
+        api.departments(next.showArchivedDepartments),
       ]);
-      loaded = { orders: tree.orders, targets: targets.targets, clauses: clauses.clauses };
+      loaded = {
+        orders: tree.orders, targets: targets.targets, clauses: clauses.clauses,
+        departments: departments.departments,
+      };
       setData(loaded);
       setApiState("online");
     } catch (err) {
@@ -103,6 +111,13 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
       setTab("targets");
       if (!data.targets.some((t) => t.nodeId === nodeId) && !flagsRef.current.showArchivedTargets)
         await reload({ showArchivedTargets: true });
+      setFlashTarget({ id: nodeId, seq: Date.now() });
+      return;
+    }
+    if (kind === "Department") {
+      setTab("departments");
+      if (!data.departments.some((d) => d.nodeId === nodeId) && !flagsRef.current.showArchivedDepartments)
+        await reload({ showArchivedDepartments: true });
       setFlashTarget({ id: nodeId, seq: Date.now() });
       return;
     }

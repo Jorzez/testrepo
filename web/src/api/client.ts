@@ -1,6 +1,6 @@
 import type {
-  CheckResult, CheckTarget, Descendants, Diagnostics, FlatClause, NodeProps, Order,
-  RepairReport, RuleType, Status,
+  CheckResult, CheckTarget, Department, Descendants, Diagnostics, ExceptionStatus, FlatClause,
+  NodeProps, Order, RepairReport, RuleType, Status,
 } from "./types";
 
 /* Адрес API. По умолчанию тот же хост, порт 8080 — работает и локально,
@@ -46,12 +46,21 @@ async function request<T>(method: Method, path: string, body?: unknown): Promise
 const enc = encodeURIComponent;
 const node = (id: string) => `/catalog/nodes/${enc(id)}`;
 
+export interface ScopeException {
+  departmentId: string;
+  status: ExceptionStatus;
+  basis: string | null;
+  note: string | null;
+}
+
 export const api = {
   tree: (includeArchived: boolean) =>
     request<{ orders: Order[] }>("GET", `/catalog/tree?include_archived=${includeArchived}`),
   checkTargets: (includeArchived: boolean) =>
     request<{ targets: CheckTarget[] }>("GET", `/catalog/check-targets?include_archived=${includeArchived}`),
   clauses: () => request<{ clauses: FlatClause[] }>("GET", "/catalog/clauses"),
+  departments: (includeArchived: boolean) =>
+    request<{ departments: Department[] }>("GET", `/catalog/departments?include_archived=${includeArchived}`),
   diagnostics: () => request<Diagnostics>("GET", "/catalog/diagnostics"),
 
   node: (id: string) => request<NodeProps>("GET", node(id)),
@@ -73,6 +82,11 @@ export const api = {
   createTarget: (body: { name: string; description: string }) =>
     request("POST", "/catalog/check-targets", body),
 
+  createDepartment: (body: { departmentId: string; name: string }) =>
+    request("POST", "/catalog/departments", body),
+
+  setRuleScope: (id: string, only: string[], exceptions: ScopeException[]) =>
+    request("PUT", `/catalog/rules/${enc(id)}/departments`, { only, exceptions }),
   setRuleTargets: (id: string, targets: string[]) =>
     request("PUT", `/catalog/rules/${enc(id)}/targets`, { targets }),
   setReferences: (id: string, references: string[]) =>
@@ -83,5 +97,6 @@ export const api = {
     request("POST", `/catalog/rules/${enc(id)}/move`, { parentNodeId }),
   repairIdentifiers: () => request<RepairReport>("POST", "/catalog/repair-identifiers"),
 
-  checkGoal: (goal: string) => request<CheckResult>("POST", "/check-goal", { goal }),
+  checkGoal: (goal: string, departmentId: string | null) =>
+    request<CheckResult>("POST", "/check-goal", { goal, department_id: departmentId }),
 };

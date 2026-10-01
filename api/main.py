@@ -3,6 +3,7 @@
 import logging
 import os
 from contextlib import asynccontextmanager
+from typing import Optional
 
 from fastapi import Body, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -48,18 +49,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# CRUD над приказами, пунктами, правилами, атрибутами и примерами.
+# CRUD над приказами, пунктами, правилами, атрибутами, примерами и подразделениями.
 app.include_router(catalog_router)
 
 
 class GoalRequest(BaseModel):
     goal: str = Field(..., description="Формулировка цели для проверки")
+    department_id: Optional[str] = Field(
+        None,
+        description="Идентификатор подразделения (Department.departmentId). "
+                    "Без него применяются все правила, а причина пишется в notes",
+    )
 
 
 @app.post("/check-goal")
 def check(req: GoalRequest):
     """Проверка цели на соответствие действующим приказам."""
-    return check_goal(req.goal)
+    return check_goal(req.goal, department_id=req.department_id)
 
 
 MAX_BATCH = int(os.getenv("MAX_GOALS_PER_REQUEST", "200"))
@@ -69,9 +75,11 @@ MAX_BATCH = int(os.getenv("MAX_GOALS_PER_REQUEST", "200"))
 def check_many(items: list[schemas.GoalItem] = Body(..., description="Массив целей")):
     """Пакетная проверка целей.
 
-    Вход — массив объектов вида {"goal": "...", "id": "..."}. Порядок ответов
+    Вход — массив объектов вида {"goal": "...", "department_id": "...", "id": "..."}.
+    department_id обязателен: кадровая система его знает. Порядок ответов
     совпадает с порядком входа, id возвращается как передан (или null).
-    Обращения к модели идут параллельно; словарь атрибутов читается один раз.
+    Обращения к модели идут параллельно; словари атрибутов и подразделений
+    читаются один раз.
     """
     if len(items) > MAX_BATCH:
         raise HTTPException(

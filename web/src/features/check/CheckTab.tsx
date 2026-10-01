@@ -2,10 +2,12 @@ import { useState } from "react";
 
 import { api } from "../../api/client";
 import type { CheckResult, CheckStatus } from "../../api/types";
+import { useCatalog } from "../../state/catalog";
 import { Chip, Spinner } from "../../ui/common";
 import { errorText, useToast } from "../../ui/Toasts";
 
-/* Прогон формулировки через /check-goal с разбором нарушений. */
+/* Прогон формулировки через /check-goal с разбором нарушений. Подразделение
+   необязательно: без него применяются все правила, а причина попадает в заметки. */
 
 const STATUS_VIEW: Record<CheckStatus, { text: string; cls: string }> = {
   ALLOWED: { text: "Нарушений нет", cls: "ok" },
@@ -15,7 +17,9 @@ const STATUS_VIEW: Record<CheckStatus, { text: string; cls: string }> = {
 
 export function CheckTab({ hidden }: { hidden: boolean }) {
   const toast = useToast();
+  const { departments } = useCatalog();
   const [goal, setGoal] = useState("");
+  const [departmentId, setDepartmentId] = useState("");
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<CheckResult | null>(null);
 
@@ -25,7 +29,7 @@ export function CheckTab({ hidden }: { hidden: boolean }) {
     setBusy(true);
     setResult(null);
     try {
-      setResult(await api.checkGoal(text));
+      setResult(await api.checkGoal(text, departmentId || null));
     } catch (err) {
       toast(errorText(err), "err");
     } finally {
@@ -40,6 +44,15 @@ export function CheckTab({ hidden }: { hidden: boolean }) {
           <label htmlFor="goalInput">Формулировка цели</label>
           <textarea id="goalInput" value={goal} onChange={(e) => setGoal(e.target.value)}
             placeholder="Например: снизить долю просроченных заявок до 5% к 31.12.2025 в рамках проекта «Альфа»" />
+        </div>
+        <div className="field">
+          <label htmlFor="departmentInput">Подразделение</label>
+          <select id="departmentInput" value={departmentId} onChange={(e) => setDepartmentId(e.target.value)}>
+            <option value="">не указано — применяются все правила</option>
+            {departments.filter((d) => d.departmentId && d.status === "active").map((d) => (
+              <option key={d.departmentId} value={d.departmentId}>{d.name} · {d.departmentId}</option>
+            ))}
+          </select>
         </div>
         <button className="btn primary" disabled={busy} onClick={run}>
           {busy ? <><Spinner /> Проверяем…</> : "Проверить"}
@@ -56,6 +69,9 @@ function Result({ result }: { result: CheckResult }) {
     <div className="panel" id="checkResult" style={{ marginTop: 16 }}>
       <div className="row" style={{ alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <span className={`badge ${view.cls}`}>{view.text}</span>
+        <span className="dim">подразделение: {result.department
+          ? <Chip>{result.department.name || result.department.id}</Chip>
+          : "не определено"}</span>
         <span className="dim">атрибуты в цели:{" "}
           {result.detected_attributes.length
             ? result.detected_attributes.map((a) => <Chip key={a}>{a}</Chip>)
@@ -81,6 +97,11 @@ function Result({ result }: { result: CheckResult }) {
               </span>
               <span className="mono">{v.order_number} {v.clause_code}</span>
               <Chip>{v.attribute}</Chip>
+              {v.candidate_exception && (
+                <span className="badge warn" title={v.candidate_exception.note ?? undefined}>
+                  есть исключение-кандидат — не утверждено
+                </span>
+              )}
             </div>
             <div>{v.rule_text}</div>
             {v.check_instruction && <div className="dim" style={{ marginTop: 6 }}>{v.check_instruction}</div>}
@@ -96,6 +117,19 @@ function Result({ result }: { result: CheckResult }) {
           </div>
         );
       })}
+      {result.exemptions.map((x, i) => (
+        <div key={"x" + i} className="exemption">
+          <div className="rule-meta">
+            <span className="badge ok">Не применяется в подразделении</span>
+            <span className="mono">{x.order_number} {x.clause_code}</span>
+            <Chip>{x.attribute}</Chip>
+          </div>
+          <div>{x.rule_text}</div>
+          <div className="dim" style={{ marginTop: 6 }}>
+            Основание: {x.basis || "не указано"}{x.note ? ` — ${x.note}` : ""}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

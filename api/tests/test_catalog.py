@@ -246,6 +246,138 @@ def test_set_rule_targets_clears_old_links(db):
     assert any("DELETE rel" in q for q, _ in db.calls)
 
 
+# ------------------------------ подразделения -------------------------------
+
+DEPARTMENT_NODE = "4:db:9"
+Q_KNOWN_DEPARTMENTS = "MATCH (d:Department) RETURN d.departmentId AS id"
+Q_DEPARTMENT_USAGE = (
+    "MATCH (r:Rule)-[:ONLY_IN|EXCEPT_IN]->(d) WHERE elementId(d) = $node_id "
+    "RETURN DISTINCT coalesce(r.ruleId, '(без ruleId)') AS rule_id"
+)
+
+
+def _rule_with_departments(db, *ids):
+    _exists(db, RULE_NODE, ["Rule"], ruleId="R-1.1")
+    db.rows[Q_KNOWN_DEPARTMENTS] = [{"id": i} for i in ids]
+
+
+def test_tree_carries_rule_scope(db):
+    _seed(db)
+    db.rows[catalog.Q_RULE_DEPARTMENTS] = [
+        {"parent": RULE_NODE, "kind": "ONLY_IN", "departmentId": "UCT", "name": "УЦТ",
+         "status": None, "basis": None, "note": None},
+        {"parent": RULE_NODE, "kind": "EXCEPT_IN", "departmentId": "FIN", "name": "Финансы",
+         "status": "candidate", "basis": None, "note": "договорённость"},
+    ]
+    rule = catalog.build_tree()["orders"][0]["clauses"][0]["rules"][0]
+    assert rule["onlyIn"] == [{"departmentId": "UCT", "name": "УЦТ"}]
+    assert rule["exceptions"] == [{"departmentId": "FIN", "name": "Финансы", "status": "candidate",
+                                   "basis": None, "note": "договорённость"}]
+
+
+def test_tree_rule_without_scope_applies_to_all(db):
+    _seed(db)
+    rule = catalog.build_tree()["orders"][0]["clauses"][0]["rules"][0]
+    assert rule["onlyIn"] == [] and rule["exceptions"] == []
+
+
+def test_departments_list_with_rules(db):
+    db.rows[catalog.Q_DEPARTMENTS] = [
+        {"nodeId": DEPARTMENT_NODE, "props": {"departmentId": "UCT", "name": "УЦТ"}},
+        {"nodeId": "4:db:10", "props": {"departmentId": "OLD", "name": "Старый", "status": "archived"}},
+    ]
+    db.rows[catalog.Q_DEPARTMENT_LINKS] = [
+        {"parent": DEPARTMENT_NODE, "kind": "ONLY_IN", "ruleId": "R-1.1", "status": None},
+        {"parent": DEPARTMENT_NODE, "kind": "EXCEPT_IN", "ruleId": "R-2.4", "status": "active"},
+    ]
+    departments = catalog.list_departments()
+    assert [d["departmentId"] for d in departments] == ["UCT"], "архив по умолчанию скрыт"
+    assert departments[0]["status"] == "active"
+    assert departments[0]["onlyRules"] == ["R-1.1"]
+    assert departments[0]["exceptRules"] == [{"ruleId": "R-2.4", "status": "active"}]
+    assert len(catalog.list_departments(include_archived=True)) == 2
+
+
+def test_create_department_rejects_duplicate_id(db):
+    db.rows["MATCH (d:Department {departmentId: $id}) RETURN d.departmentId AS id"] = [{"id": "UCT"}]
+    with pytest.raises(Conflict) as exc:
+        catalog.create_department("UCT", "УЦТ")
+    assert "уже существует" in str(exc.value)
+
+
+def test_delete_department_refuses_while_used(db):
+    """Иначе ограничение ONLY_IN исчезло бы, и правило стало бы действовать для всех."""
+    _exists(db, DEPARTMENT_NODE, ["Department"], departmentId="UCT", status="archived")
+    db.rows[Q_DEPARTMENT_USAGE] = [{"rule_id": "R-1.1"}]
+    with pytest.raises(Conflict) as exc:
+        catalog.delete_node(DEPARTMENT_NODE, force=True)
+    assert "R-1.1" in str(exc.value)
+
+
+def test_delete_unused_department(db):
+    _exists(db, DEPARTMENT_NODE, ["Department"], departmentId="UCT", status="active")
+    with pytest.raises(Conflict):
+        catalog.delete_node(DEPARTMENT_NODE)
+    assert catalog.delete_node(DEPARTMENT_NODE, force=True) == {"deleted": DEPARTMENT_NODE}
+
+
+def test_department_id_is_a_business_key(db):
+    _exists(db, DEPARTMENT_NODE, ["Department"], departmentId="UCT")
+    with pytest.raises(Conflict):
+        catalog.update_properties(DEPARTMENT_NODE, {"departmentId": ""})
+
+
+def test_scope_rejects_unknown_department(db):
+    _rule_with_departments(db, "UCT")
+    with pytest.raises(NotFound) as exc:
+        catalog.set_rule_scope(RULE_NODE, ["UCT", "XXX"], [])
+    assert "XXX" in str(exc.value)
+
+
+def test_scope_rejects_department_on_both_sides(db):
+    _rule_with_departments(db, "UCT")
+    with pytest.raises(Conflict):
+        catalog.set_rule_scope(RULE_NODE, ["UCT"], [{"departmentId": "UCT", "status": "candidate"}])
+
+
+def test_scope_rejects_repeated_department(db):
+    _rule_with_departments(db, "UCT")
+    with pytest.raises(Conflict):
+        catalog.set_rule_scope(RULE_NODE, ["UCT", "UCT"], [])
+
+
+def test_active_exception_requires_basis(db):
+    """Основание попадает в ответ проверки — без него исключение остаётся кандидатом."""
+    _rule_with_departments(db, "FIN")
+    with pytest.raises(Conflict) as exc:
+        catalog.set_rule_scope(RULE_NODE, [], [{"departmentId": "FIN", "status": "active", "basis": " "}])
+    assert "основание" in str(exc.value)
+
+
+def test_exception_status_is_validated(db):
+    _rule_with_departments(db, "FIN")
+    with pytest.raises(Conflict):
+        catalog.set_rule_scope(RULE_NODE, [], [{"departmentId": "FIN", "status": "approved"}])
+
+
+def test_scope_replaces_old_links_and_normalizes(db):
+    _rule_with_departments(db, "UCT", "FIN")
+    result = catalog.set_rule_scope(RULE_NODE, ["UCT"], [
+        {"departmentId": "FIN", "basis": " ", "note": " договорённость отдела "}])
+    assert result["exceptions"] == [{"departmentId": "FIN", "status": "candidate", "basis": None,
+                                     "note": "договорённость отдела"}]
+    queries = [q for q, _ in db.calls]
+    assert any("ONLY_IN|EXCEPT_IN" in q and "DELETE rel" in q for q in queries)
+    assert any("MERGE (r)-[:ONLY_IN]->(d)" in q for q in queries)
+    assert any("MERGE (r)-[x:EXCEPT_IN]->(d)" in q for q in queries)
+
+
+def test_empty_scope_only_clears(db):
+    _rule_with_departments(db, "UCT")
+    catalog.set_rule_scope(RULE_NODE, [], [])
+    assert not any("MERGE" in q for q, _ in db.calls), "пустая область — правило для всех"
+
+
 def test_clause_cannot_reference_itself(db):
     _exists(db, CLAUSE_NODE, ["Clause"], code="1.1")
     with pytest.raises(Conflict):
