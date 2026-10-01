@@ -191,10 +191,10 @@ export function createBackend() {
       if (!d) throw new HttpError(404, `Нет таких подразделений: ${departmentId}`);
       return d.id;
     };
-    const both = only.filter((d) => items.some((e) => e.departmentId === d));
-    if (both.length)
-      throw new HttpError(409, "Подразделение не может быть одновременно в «действует только в» "
-        + `и в исключениях: ${both.join(", ")}`);
+    const outside = only.length ? items.filter((e) => !only.includes(e.departmentId)).map((e) => e.departmentId) : [];
+    if (outside.length)
+      throw new HttpError(409, `Исключение задано там, где правило и так не действует: ${outside.join(", ")}. `
+        + "Добавьте подразделение в «действует только в» или уберите исключение.");
     const next = items.map((e): Exception => {
       const basis = String(e.basis ?? "").trim() || null;
       const status = e.status ?? "candidate";

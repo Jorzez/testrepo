@@ -13,18 +13,21 @@ export function DepartmentsTab({ hidden }: { hidden: boolean }) {
 
   return (
     <section id="tab-departments" className={hidden ? "hidden" : ""}>
-      <div className="toolbar">
-        <div className="grow muted">
-          Правило без подразделений действует для всех. Область действия задаётся у правила: меню «⋯» → «Подразделения».
+      <div className="page-head">
+        <div>
+          <h1>Подразделения</h1>
+          <div className="sub">Идентификатор передаёт кадровая система в запросе проверки. Где какое правило действует — в разделе «Правила».</div>
         </div>
+        <button className="btn primary" onClick={actions.addDepartment}>+ Подразделение</button>
+      </div>
+      <div className="toolbar">
         <label className="check">
           <input type="checkbox" checked={showArchivedDepartments}
             onChange={(e) => void reload({ showArchivedDepartments: e.target.checked })} /> Архив
         </label>
-        <button className="btn primary" onClick={actions.addDepartment}>Создать</button>
       </div>
       {departments.length ? (
-        <table>
+        <div className="card"><table>
           <thead>
             <tr>
               <th style={{ width: "18%" }}>Идентификатор</th><th>Название</th>
@@ -53,7 +56,7 @@ export function DepartmentsTab({ hidden }: { hidden: boolean }) {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       ) : <div className="empty">Подразделений нет. Пока их нет, все правила действуют для всех.</div>}
     </section>
   );

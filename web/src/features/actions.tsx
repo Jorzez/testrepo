@@ -1,5 +1,5 @@
 import { api } from "../api/client";
-import type { CheckTarget, Clause, Department, Example, Order, Rule, RuleType, Status } from "../api/types";
+import type { CheckTarget, Clause, Department, Example, Order, Rule, Status } from "../api/types";
 import { useCatalog } from "../state/catalog";
 import { findOrderOf } from "../state/tree";
 import { Chip } from "../ui/common";
@@ -7,7 +7,6 @@ import { useDialogs, type Option } from "../ui/Dialogs";
 import type { MenuItem } from "../ui/Menu";
 import { errorText, useToast } from "../ui/Toasts";
 import { usePropertiesEditor } from "./PropertiesDialog";
-import { useRuleScopeEditor } from "./RuleScopeDialog";
 
 /* Все операции над узлами каталога. Каждая либо открывает форму, либо
    спрашивает подтверждение, а после изменения перечитывает данные. */
@@ -21,11 +20,10 @@ const str = (v: unknown) => (v as string) ?? "";
 
 export function useActions() {
   const catalog = useCatalog();
-  const { orders, targets, clauses, mutate, expand } = catalog;
+  const { orders, targets, clauses, mutate, openWizard, selectOrder } = catalog;
   const { openForm, confirm } = useDialogs();
   const toast = useToast();
   const editProperties = usePropertiesEditor();
-  const editRuleScope = useRuleScopeEditor();
 
   /** Ошибки действий, не прошедших через форму, показываются уведомлением. */
   const run = (fn: () => Promise<unknown>) => () => { fn().catch((err) => toast(errorText(err), "err")); };
@@ -98,9 +96,12 @@ export function useActions() {
       { name: "orderId", label: "Идентификатор", placeholder: "необязательно",
         hint: "Если не заполнить — будет построен из номера." },
     ],
-    onSubmit: (v) => mutate(() => api.createOrder({
-      number: str(v.number), title: str(v.title), date: str(v.date) || null, orderId: str(v.orderId) || null,
-    }), "Приказ создан"),
+    onSubmit: (v) => mutate(async () => {
+      const created = await api.createOrder({
+        number: str(v.number), title: str(v.title), date: str(v.date) || null, orderId: str(v.orderId) || null,
+      });
+      selectOrder(created.nodeId);
+    }, "Приказ создан"),
   });
 
   const editOrder = (o: Order) => () => openForm({
@@ -134,7 +135,7 @@ export function useActions() {
     ],
     onSubmit: (v) => mutate(async () => {
       await api.createClause({ orderNodeId, code: str(v.code), text: str(v.text) });
-      expand([orderNodeId], []);
+      selectOrder(orderNodeId);
     }, "Пункт добавлен"),
   });
 
@@ -171,7 +172,7 @@ export function useActions() {
 
   const clauseMenu = (c: Clause): MenuItem[] => [
     { label: "Изменить", run: editClause(c) },
-    { label: "Создать правило", run: addRule(c.nodeId) },
+    { label: "Создать правило", run: addRule(c) },
     { label: "Свойства", run: props(c.nodeId) },
     { label: "Ссылки", run: clauseRefs(c) },
     { label: "Перенести", run: moveClause(c) },
@@ -180,27 +181,9 @@ export function useActions() {
 
   // ------------------------------- правила ---------------------------------
 
-  const addRule = (clauseNodeId: string) => () => openForm({
-    title: "Новое правило", submitLabel: "Создать",
-    fields: [
-      { name: "type", label: "Тип", type: "select", value: "REQUIREMENT", options: RULE_TYPE_OPTIONS },
-      { name: "description", label: "Формулировка правила", type: "textarea", required: true,
-        placeholder: "Цель обязана содержать конкретный срок исполнения" },
-      { name: "checkInstruction", label: "Что подсказать автору цели", type: "textarea",
-        placeholder: "Добавьте в формулировку дату или период завершения",
-        hint: "Текст попадает в ответ проверки как check_instruction." },
-      { name: "targets", label: "Атрибуты", type: "multi", value: [], options: targetOptions(),
-        emptyText: "Атрибутов нет — заведите их на вкладке «Атрибуты».",
-        hint: "Правило без атрибутов никогда не сработает." },
-    ],
-    onSubmit: (v) => mutate(async () => {
-      await api.createRule({
-        clauseNodeId, type: v.type as RuleType, description: str(v.description),
-        checkInstruction: str(v.checkInstruction), targets: v.targets as string[],
-      });
-      expand([], [clauseNodeId]);
-    }, "Правило создано"),
-  });
+  /** Новое правило заводится мастером: пункт уже выбран. */
+  const addRule = (c: Clause) => () =>
+    openWizard({ orderNodeId: findOrderOf(orders, c.nodeId)?.order.nodeId, clauseNodeId: c.nodeId });
 
   const editRule = (r: Rule) => () => openForm({
     title: "Правило " + (r.ruleId ?? ""),
@@ -218,7 +201,7 @@ export function useActions() {
     fields: [{
       name: "targets", label: "Применяется к атрибутам", type: "multi",
       value: r.targets, options: targetOptions(),
-      emptyText: "Атрибутов нет — заведите их на вкладке «Атрибуты».",
+      emptyText: "Атрибутов нет — заведите их в разделе «Атрибуты».",
       hint: r.type === "PROHIBITION"
         ? "Запрет сработает, если хотя бы один из атрибутов найден в цели."
         : "Требование сработает по каждому атрибуту, которого в цели нет.",
@@ -236,12 +219,9 @@ export function useActions() {
     });
   };
 
-  const ruleScope = (r: Rule) => () => editRuleScope(r);
-
   const ruleMenu = (r: Rule): MenuItem[] => [
     { label: "Изменить", run: editRule(r) },
     { label: "Атрибуты", run: ruleTargets(r) },
-    { label: "Подразделения", run: ruleScope(r) },
     { label: "Создать пример", run: addExample(r) },
     { label: "Свойства", run: props(r.nodeId) },
     { label: "Перенести", run: moveRule(r) },
@@ -345,8 +325,8 @@ export function useActions() {
   ];
 
   return {
-    addOrder, addTarget, addDepartment, orderMenu, clauseMenu, ruleMenu, targetMenu, departmentMenu,
-    ruleTargets, ruleScope,
+    addOrder, addTarget, addDepartment, addClause, addRule, addExample,
+    editOrder, editRule, editTarget, orderMenu, clauseMenu, ruleMenu, targetMenu, departmentMenu, ruleTargets,
     editExample, deleteExample, props, archive, restore,
   };
 }

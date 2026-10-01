@@ -67,14 +67,17 @@ export function HealthTab({ hidden }: { hidden: boolean }) {
 
   return (
     <section id="tab-health" className={hidden ? "hidden" : ""}>
-      <div className="toolbar">
-        <div className="grow muted">Что мешает проверкам работать честно. «Показать» ведёт к конкретному объекту.</div>
+      <div className="page-head">
+        <div>
+          <h1>Замечания к данным</h1>
+          <div className="sub">Что мешает проверкам работать честно. «Показать» ведёт к конкретному объекту.</div>
+        </div>
         <button className="btn" onClick={() => void load()}>Проверить снова</button>
       </div>
       <div id="healthPanel">
-        {state.kind === "loading" && <div className="panel"><Spinner /> Проверяем…</div>}
+        {state.kind === "loading" && <div className="card pad"><Spinner /> Проверяем…</div>}
         {state.kind === "error" && (
-          <div className="panel">
+          <div className="card pad">
             <span className="badge warn">API недоступен</span>
             <div className="dim" style={{ marginTop: 8 }}>{state.message}</div>
           </div>
@@ -94,7 +97,7 @@ function Report({ report, repairing, onRepair, onGoTo }: {
 }) {
   return (
     <>
-      <div className="panel" style={{ marginBottom: 16 }}>
+      <div className="card pad" style={{ marginBottom: 16 }}>
         <div className="row" style={{ alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <span className={`badge ${report.ready ? "ok" : "err"}`}>
             {report.ready ? "Граф готов к проверкам" : "Граф не готов к проверкам"}

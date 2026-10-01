@@ -334,10 +334,21 @@ def test_scope_rejects_unknown_department(db):
     assert "XXX" in str(exc.value)
 
 
-def test_scope_rejects_department_on_both_sides(db):
-    _rule_with_departments(db, "UCT")
-    with pytest.raises(Conflict):
-        catalog.set_rule_scope(RULE_NODE, ["UCT"], [{"departmentId": "UCT", "status": "candidate"}])
+def test_scope_allows_exception_inside_only_list(db):
+    """«Действует в УЦТ и АГД, но в АГД исключение по п. 2.5» — обычный случай."""
+    _rule_with_departments(db, "UCT", "AGD")
+    result = catalog.set_rule_scope(RULE_NODE, ["UCT", "AGD"], [
+        {"departmentId": "AGD", "status": "active", "basis": "ПР-01 п. 2.5"}])
+    assert result["only"] == ["UCT", "AGD"]
+    assert result["exceptions"][0]["departmentId"] == "AGD"
+
+
+def test_scope_rejects_exception_outside_only_list(db):
+    """Вне списка правило и так не действует — основание исключения не попало бы в ответ."""
+    _rule_with_departments(db, "UCT", "FIN")
+    with pytest.raises(Conflict) as exc:
+        catalog.set_rule_scope(RULE_NODE, ["UCT"], [{"departmentId": "FIN", "status": "candidate"}])
+    assert "FIN" in str(exc.value)
 
 
 def test_scope_rejects_repeated_department(db):
@@ -362,7 +373,7 @@ def test_exception_status_is_validated(db):
 
 def test_scope_replaces_old_links_and_normalizes(db):
     _rule_with_departments(db, "UCT", "FIN")
-    result = catalog.set_rule_scope(RULE_NODE, ["UCT"], [
+    result = catalog.set_rule_scope(RULE_NODE, ["UCT", "FIN"], [
         {"departmentId": "FIN", "basis": " ", "note": " договорённость отдела "}])
     assert result["exceptions"] == [{"departmentId": "FIN", "status": "candidate", "basis": None,
                                      "note": "договорённость отдела"}]

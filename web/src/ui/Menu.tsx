@@ -11,6 +11,7 @@ export type MenuItem = { label: string; run: () => unknown; danger?: boolean } |
 
 interface OpenMenu {
   anchor: DOMRect;
+  element: HTMLElement;
   items: MenuItem[];
 }
 
@@ -20,16 +21,22 @@ export function MenuProvider({ children }: { children: ReactNode }) {
   const [menu, setMenu] = useState<OpenMenu | null>(null);
   const close = useCallback(() => setMenu(null), []);
   const open = useCallback((anchor: HTMLElement, items: MenuItem[]) =>
-    setMenu({ anchor: anchor.getBoundingClientRect(), items }), []);
+    setMenu({ anchor: anchor.getBoundingClientRect(), element: anchor, items }), []);
 
   useEffect(() => {
     if (!menu) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
-    addEventListener("scroll", close, true);
+    // Закрываем, только если кнопка действительно уехала: событие прокрутки
+    // может прийти с опозданием — от прокрутки, случившейся до открытия меню.
+    const onScroll = () => {
+      const now = menu.element.getBoundingClientRect();
+      if (Math.abs(now.top - menu.anchor.top) > 1 || Math.abs(now.left - menu.anchor.left) > 1) close();
+    };
+    addEventListener("scroll", onScroll, true);
     addEventListener("resize", close);
     addEventListener("keydown", onKey);
     return () => {
-      removeEventListener("scroll", close, true);
+      removeEventListener("scroll", onScroll, true);
       removeEventListener("resize", close);
       removeEventListener("keydown", onKey);
     };

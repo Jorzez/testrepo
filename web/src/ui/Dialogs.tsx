@@ -89,9 +89,15 @@ export function DialogProvider({ children }: { children: ReactNode }) {
 }
 
 /** Фон модального окна; клик мимо окна закрывает его. */
-export function Overlay({ onClose, children }: { onClose?: () => void; children: ReactNode }) {
+export function Overlay({ onClose, clear, children }: {
+  onClose?: () => void;
+  /** Без затемнения — для всплывающего окна, привязанного к элементу. */
+  clear?: boolean;
+  children: ReactNode;
+}) {
   return (
-    <div className="overlay" onClick={(e) => { if (e.target === e.currentTarget) onClose?.(); }}>
+    <div className={`overlay ${clear ? "clear" : ""}`}
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose?.(); }}>
       {children}
     </div>
   );

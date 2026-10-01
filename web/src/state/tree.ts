@@ -43,3 +43,24 @@ export const orderMatches = (order: Order, query: string) =>
 /** При активном поиске совпавшие пункты раскрываются сами: иначе результат
     прячется внутри свёрнутых пунктов. */
 export const clauseMatches = (clause: Clause, query: string) => !!query && contains(clauseText(clause), query);
+
+/** Правило вместе с пунктом и приказом, к которым оно относится. */
+export interface RuleRef {
+  order: Order;
+  clause: Clause;
+  rule: Rule;
+}
+
+export const allRuleRefs = (orders: Order[]): RuleRef[] =>
+  orders.flatMap((order) => order.clauses.flatMap((clause) => clause.rules.map((rule) => ({ order, clause, rule }))));
+
+export const findRuleRef = (orders: Order[], nodeId: string): RuleRef | undefined =>
+  allRuleRefs(orders).find((ref) => ref.rule.nodeId === nodeId || ref.rule.examples.some((e) => e.nodeId === nodeId));
+
+/** Правила, которые реально участвуют в проверке: активна вся цепочка и есть признаки. */
+export const activeRuleRefs = (orders: Order[]): RuleRef[] =>
+  allRuleRefs(orders).filter(({ order, clause, rule }) =>
+    order.status === "active" && clause.status === "active" && rule.status === "active" && rule.targets.length > 0);
+
+export const ruleMatches = ({ order, clause, rule }: RuleRef, query: string) =>
+  !query || contains([order.number, clause.code, clause.text, ...ruleText(rule)], query);

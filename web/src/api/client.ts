@@ -43,6 +43,12 @@ async function request<T>(method: Method, path: string, body?: unknown): Promise
   return payload as T;
 }
 
+/** Ответ создания узла: его свойства и nodeId. */
+export interface Created {
+  nodeId: string;
+  [key: string]: unknown;
+}
+
 const enc = encodeURIComponent;
 const node = (id: string) => `/catalog/nodes/${enc(id)}`;
 
@@ -71,19 +77,19 @@ export const api = {
   remove: (id: string, force = false) => request("DELETE", node(id) + (force ? "?force=true" : "")),
 
   createOrder: (body: { number: string; title: string; date: string | null; orderId: string | null }) =>
-    request("POST", "/catalog/orders", body),
+    request<Created>("POST", "/catalog/orders", body),
   createClause: (body: { orderNodeId: string; code: string; text: string }) =>
-    request("POST", "/catalog/clauses", body),
+    request<Created>("POST", "/catalog/clauses", body),
   createRule: (body: {
     clauseNodeId: string; type: RuleType; description: string; checkInstruction: string; targets: string[];
-  }) => request("POST", "/catalog/rules", body),
+  }) => request<Created>("POST", "/catalog/rules", body),
   createExample: (body: { ruleNodeId: string; text: string; isViolation: boolean }) =>
-    request("POST", "/catalog/examples", body),
+    request<Created>("POST", "/catalog/examples", body),
   createTarget: (body: { name: string; description: string }) =>
-    request("POST", "/catalog/check-targets", body),
+    request<Created>("POST", "/catalog/check-targets", body),
 
   createDepartment: (body: { departmentId: string; name: string }) =>
-    request("POST", "/catalog/departments", body),
+    request<Created>("POST", "/catalog/departments", body),
 
   setRuleScope: (id: string, only: string[], exceptions: ScopeException[]) =>
     request("PUT", `/catalog/rules/${enc(id)}/departments`, { only, exceptions }),

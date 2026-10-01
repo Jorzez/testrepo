@@ -5,9 +5,9 @@ import {
 import { api } from "../api/client";
 import type { CheckTarget, Department, Diagnostics, FlatClause, NodeKind, Order } from "../api/types";
 import { errorText, useToast } from "../ui/Toasts";
-import { findOrderOf } from "./tree";
+import { findOrderOf, findRuleRef } from "./tree";
 
-export type Tab = "catalog" | "targets" | "departments" | "check" | "health";
+export type Section = "check" | "rules" | "orders" | "departments" | "targets" | "health";
 export type ApiState = "connecting" | "online" | "offline";
 
 interface Data {
@@ -23,22 +23,32 @@ interface Flags {
   showArchivedDepartments: boolean;
 }
 
+/** С чего начать мастер нового правила. */
+export interface WizardPreset {
+  orderNodeId?: string;
+  clauseNodeId?: string;
+}
+
 interface CatalogState extends Data, Flags {
   apiState: ApiState;
   health: Diagnostics["counts"] | null;
-  tab: Tab;
-  setTab: (tab: Tab) => void;
+  section: Section;
+  setSection: (section: Section) => void;
   /** Перечитать данные; флаги архива можно поменять тем же вызовом. */
   reload: (flags?: Partial<Flags>) => Promise<Data | null>;
   /** Выполнить изменение, показать сообщение и перечитать данные. */
   mutate: (fn: () => Promise<unknown>, success?: string) => Promise<void>;
   refreshHealth: () => Promise<void>;
-  openOrders: Set<string>;
-  openClauses: Set<string>;
-  toggleOrder: (id: string) => void;
-  toggleClause: (id: string) => void;
-  expand: (orderIds: string[], clauseIds: string[]) => void;
-  collapseAll: () => void;
+  /** Приказ, открытый в разделе «Приказы». */
+  selectedOrder: string | null;
+  selectOrder: (nodeId: string) => void;
+  /** Правило, открытое в боковой панели. */
+  panelRule: string | null;
+  openRule: (nodeId: string) => void;
+  closeRule: () => void;
+  wizard: WizardPreset | null;
+  openWizard: (preset?: WizardPreset) => void;
+  closeWizard: () => void;
   goToNode: (nodeId: string, kind?: NodeKind) => Promise<void>;
 }
 
@@ -50,12 +60,6 @@ export function useCatalog() {
   return ctx;
 }
 
-const toggled = (set: Set<string>, id: string) => {
-  const next = new Set(set);
-  if (next.has(id)) next.delete(id); else next.add(id);
-  return next;
-};
-
 export function CatalogProvider({ children }: { children: ReactNode }) {
   const toast = useToast();
   const [data, setData] = useState<Data>({ orders: [], targets: [], clauses: [], departments: [] });
@@ -65,9 +69,10 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
   const flagsRef = useRef(flags);
   const [apiState, setApiState] = useState<ApiState>("connecting");
   const [health, setHealth] = useState<Diagnostics["counts"] | null>(null);
-  const [tab, setTab] = useState<Tab>("catalog");
-  const [openOrders, setOpenOrders] = useState<Set<string>>(new Set());
-  const [openClauses, setOpenClauses] = useState<Set<string>>(new Set());
+  const [section, setSectionState] = useState<Section>("check");
+  const [selectedOrder, setSelectedOrder] = useState<string | null>(null);
+  const [panelRule, setPanelRule] = useState<string | null>(null);
+  const [wizard, setWizard] = useState<WizardPreset | null>(null);
   const [flashTarget, setFlashTarget] = useState<{ id: string; seq: number } | null>(null);
 
   const refreshHealth = useCallback(async () => {
@@ -106,60 +111,61 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => { void reload(); }, [reload]);
 
-  const goToNode = useCallback(async (nodeId: string, kind?: NodeKind) => {
-    if (kind === "CheckTarget") {
-      setTab("targets");
-      if (!data.targets.some((t) => t.nodeId === nodeId) && !flagsRef.current.showArchivedTargets)
-        await reload({ showArchivedTargets: true });
-      setFlashTarget({ id: nodeId, seq: Date.now() });
-      return;
-    }
-    if (kind === "Department") {
-      setTab("departments");
-      if (!data.departments.some((d) => d.nodeId === nodeId) && !flagsRef.current.showArchivedDepartments)
-        await reload({ showArchivedDepartments: true });
-      setFlashTarget({ id: nodeId, seq: Date.now() });
-      return;
-    }
-    setTab("catalog");
-    let orders = data.orders;
-    let found = findOrderOf(orders, nodeId);
-    if (!found && !flagsRef.current.showArchived) {
-      orders = (await reload({ showArchived: true }))?.orders ?? orders;
-      found = findOrderOf(orders, nodeId);
-    }
-    if (found) {
-      setOpenOrders((s) => new Set(s).add(found.order.nodeId));
-      // Пункты свёрнуты по умолчанию — раскрываем тот, внутри которого искомый узел.
-      if (found.clause) setOpenClauses((s) => new Set(s).add(found.clause!.nodeId));
-    }
-    setFlashTarget({ id: nodeId, seq: Date.now() });
-  }, [data, reload]);
+  // Панель правила и мастер живут только в «Правилах» и «Приказах».
+  const setSection = useCallback((next: Section) => {
+    setSectionState(next);
+    setWizard(null);
+    if (next !== "rules" && next !== "orders") setPanelRule(null);
+  }, []);
 
-  // Подсветка — после того как React отрисовал раскрытые узлы.
+  const goToNode = useCallback(async (nodeId: string, kind?: NodeKind) => {
+    const flash = () => setFlashTarget({ id: nodeId, seq: Date.now() });
+
+    if (kind === "CheckTarget" || kind === "Department") {
+      const [list, flag]: [{ nodeId: string }[], keyof Flags] = kind === "CheckTarget"
+        ? [data.targets, "showArchivedTargets"] : [data.departments, "showArchivedDepartments"];
+      setSection(kind === "CheckTarget" ? "targets" : "departments");
+      if (!list.some((n) => n.nodeId === nodeId) && !flagsRef.current[flag]) await reload({ [flag]: true });
+      flash();
+      return;
+    }
+
+    let orders = data.orders;
+    if (!findOrderOf(orders, nodeId) && !flagsRef.current.showArchived)
+      orders = (await reload({ showArchived: true }))?.orders ?? orders;
+    const found = findOrderOf(orders, nodeId);
+    setSection("orders");
+    if (found) setSelectedOrder(found.order.nodeId);
+    // Правило и его примеры открываются в панели — там видно всё сразу.
+    const rule = findRuleRef(orders, nodeId);
+    setPanelRule(rule ? rule.rule.nodeId : null);
+    flash();
+  }, [data, reload, setSection]);
+
+  // Подсветка — после того как React отрисовал нужный раздел.
   useEffect(() => {
     if (!flashTarget) return;
-    const el = document.querySelector(`[data-node="${CSS.escape(flashTarget.id)}"]`);
+    // Узел может быть отрисован и в скрытом разделе — подсвечиваем видимый.
+    const el = [...document.querySelectorAll<HTMLElement>(`[data-node="${CSS.escape(flashTarget.id)}"]`)]
+      .find((node) => node.offsetParent !== null);
     setFlashTarget(null);
     if (!el) { toast("Объект не найден в текущем представлении", "err"); return; }
     el.scrollIntoView({ behavior: "smooth", block: "center" });
     el.classList.remove("flash");
-    void (el as HTMLElement).offsetWidth;
+    void el.offsetWidth;
     el.classList.add("flash");
   }, [flashTarget, toast]);
 
   const value = useMemo<CatalogState>(() => ({
-    ...data, ...flags, apiState, health, tab, setTab, reload, mutate, refreshHealth,
-    openOrders, openClauses,
-    toggleOrder: (id) => setOpenOrders((s) => toggled(s, id)),
-    toggleClause: (id) => setOpenClauses((s) => toggled(s, id)),
-    expand: (orderIds, clauseIds) => {
-      setOpenOrders((s) => new Set([...s, ...orderIds]));
-      setOpenClauses((s) => new Set([...s, ...clauseIds]));
-    },
-    collapseAll: () => { setOpenOrders(new Set()); setOpenClauses(new Set()); },
+    ...data, ...flags, apiState, health, section, setSection, reload, mutate, refreshHealth,
+    selectedOrder, selectOrder: setSelectedOrder,
+    panelRule, openRule: setPanelRule, closeRule: () => setPanelRule(null),
+    wizard,
+    openWizard: (preset) => { setSectionState("rules"); setPanelRule(null); setWizard(preset ?? {}); },
+    closeWizard: () => setWizard(null),
     goToNode,
-  }), [data, flags, apiState, health, tab, reload, mutate, refreshHealth, openOrders, openClauses, goToNode]);
+  }), [data, flags, apiState, health, section, setSection, reload, mutate, refreshHealth,
+    selectedOrder, panelRule, wizard, goToNode]);
 
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }
