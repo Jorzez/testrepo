@@ -5,6 +5,7 @@ import { useCatalog } from "../../state/catalog";
 import { cellState, type CellState } from "../../state/scope";
 import { allRuleRefs, normalizeQuery, ruleMatches, type RuleRef } from "../../state/tree";
 import { ArchivedBadge } from "../../ui/common";
+import { Select } from "../../ui/Select";
 import { useActions } from "../actions";
 import { useCellEditor } from "./CellEditor";
 import { RuleWizard } from "./RuleWizard";
@@ -100,18 +101,17 @@ function Matrix() {
       </div>
 
       <div className="toolbar">
-        <select className="pill" style={{ width: 220 }} aria-label="Приказ" value={orderFilter}
-          onChange={(e) => setOrderFilter(e.target.value)}>
-          <option value="">Все приказы</option>
-          {orders.map((o) => <option key={o.nodeId} value={o.nodeId}>{o.number || o.orderId || "(без номера)"}</option>)}
-        </select>
-        <input type="search" className="pill" style={{ width: 240 }} placeholder="Поиск по правилам…" value={search}
+        <Select className="pill" style={{ width: 230 }} ariaLabel="Приказ" value={orderFilter} onChange={setOrderFilter}
+          options={[{ value: "", label: "Все приказы" },
+            ...orders.map((o) => ({ value: o.nodeId, label: o.number || o.orderId || "(без номера)" }))]} />
+        <input type="search" className="pill grow" placeholder="Поиск по правилам…" value={search}
           onChange={(e) => setSearch(e.target.value)} />
         <label className="check">
           <input type="checkbox" checked={showArchived}
             onChange={(e) => void reload({ showArchived: e.target.checked })} /> Архив
         </label>
-        <div className="spacer" />
+      </div>
+      <div className="toolbar">
         <div className="legend">
           <span><span className="cell yes mini">✓</span>действует</span>
           <span><span className="cell no mini">—</span>не действует</span>

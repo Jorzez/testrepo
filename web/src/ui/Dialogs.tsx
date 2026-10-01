@@ -3,6 +3,7 @@ import {
 } from "react";
 
 import { Spinner } from "./common";
+import { Select } from "./Select";
 import { errorText, useToast } from "./Toasts";
 
 /* Одно модальное окно за раз: форма, подтверждение или произвольное
@@ -177,9 +178,7 @@ function FieldControl({ field: f, value, onChange, autoFocus }: {
       onChange={(e) => onChange(e.target.value)} />;
   } else if (f.type === "select") {
     control = (
-      <select id={id} value={value as string} autoFocus={autoFocus} onChange={(e) => onChange(e.target.value)}>
-        {f.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-      </select>
+      <Select id={id} value={value as string} autoFocus={autoFocus} onChange={onChange} options={f.options} />
     );
   } else if (f.type === "multi") {
     const selected = value as string[];

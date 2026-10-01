@@ -63,6 +63,27 @@ export async function menu(owner: Locator, item: string) {
   await owner.page().getByRole("menuitem", { name: item, exact: true }).click();
 }
 
+/** Открытое меню выпадающего списка (ui/Select.tsx) — оно рендерится в body. */
+export const selectMenu = (page: Page) => page.locator(".select-pop");
+
+/** Выбрать значение в выпадающем списке: по подписи или по value. */
+export async function choose(trigger: Locator, option: string | { value: string }) {
+  await trigger.click();
+  const menuList = selectMenu(trigger.page());
+  await (typeof option === "string"
+    ? menuList.getByRole("option", { name: option, exact: true })
+    : menuList.locator(`[data-value="${option.value}"]`)).click();
+  await expect(menuList).toHaveCount(0);
+}
+
+/** Подписи вариантов выпадающего списка. */
+export async function optionsOf(trigger: Locator) {
+  await trigger.click();
+  const labels = await selectMenu(trigger.page()).getByRole("option").allTextContents();
+  await trigger.press("Escape");
+  return labels;
+}
+
 /** Последнее уведомление с таким текстом: одинаковые могут висеть одновременно. */
 export const toast = (page: Page, text: string | RegExp) =>
   page.locator("#toasts .toast").filter({ hasText: text }).last();
@@ -78,7 +99,7 @@ export async function openRule(page: Page, rule: string) {
 export async function check(page: Page, goal: string, department: string | null = null) {
   await go(page, "Проверка цели");
   await page.getByLabel("Формулировка цели").fill(goal);
-  await page.locator("#departmentInput").selectOption(department ?? "");
+  await choose(page.locator("#departmentInput"), { value: department ?? "" });
   await page.locator("#tab-check").getByRole("button", { name: "Проверить" }).click();
   return page.locator("#checkResult");
 }

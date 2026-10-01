@@ -6,6 +6,7 @@ import { useCatalog } from "../../state/catalog";
 import { cellState, scopeOf, withApplies, withException, withOff, type Scope } from "../../state/scope";
 import { Spinner } from "../../ui/common";
 import { Overlay, useDialogs } from "../../ui/Dialogs";
+import { Select } from "../../ui/Select";
 import { errorText, useToast } from "../../ui/Toasts";
 
 /* Решение по одной ячейке матрицы: как правило относится к подразделению.
@@ -103,9 +104,8 @@ function CellEditor({ rule, department, anchor, close }: Props) {
         : (
           <div className="field" style={{ marginTop: 8 }}>
             <label htmlFor="cellDepartment">Подразделение</label>
-            <select id="cellDepartment" value={departmentId} onChange={(e) => setDepartmentId(e.target.value)}>
-              {free.map((d) => <option key={d.departmentId} value={d.departmentId}>{name(d)}</option>)}
-            </select>
+            <Select id="cellDepartment" value={departmentId} onChange={setDepartmentId}
+              options={free.map((d) => ({ value: d.departmentId!, label: name(d) }))} />
           </div>
         )}
 

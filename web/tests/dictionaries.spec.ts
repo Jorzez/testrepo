@@ -1,4 +1,6 @@
-import { cell, expect, go, menu, modal, orderItem, panel, PROJECT, ruleCard, test, toast, TRAINING } from "./fixtures";
+import {
+  cell, expect, go, menu, modal, optionsOf, orderItem, panel, PROJECT, ruleCard, test, toast, TRAINING,
+} from "./fixtures";
 import type { Page } from "@playwright/test";
 
 /* Справочники (подразделения, атрибуты) и замечания к данным. */
@@ -48,7 +50,7 @@ test("архивное подразделение уходит из провер
   await menu(departmentRow(app, "FIN"), "В архив");
   await expect(departmentRow(app, "FIN")).toHaveCount(0);
   await go(app, "Проверка цели");
-  await expect(app.locator("#departmentInput option")).toHaveText(["Подразделение не указано", "АГД", "УЦТ"]);
+  expect(await optionsOf(app.locator("#departmentInput"))).toEqual(["Подразделение не указано", "АГД", "УЦТ"]);
   await go(app, "Правила");
   await expect(app.locator("#tab-rules thead th")).toHaveText(["Правило", "АГД", "УЦТ"]);
 });

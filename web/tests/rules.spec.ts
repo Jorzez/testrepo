@@ -1,5 +1,6 @@
 import {
-  cell, check, clauseBlock, DEADLINE, expect, go, matrixRow, menu, modal, openRule, panel, PROJECT, test, toast, TRAINING,
+  cell, check, choose, clauseBlock, DEADLINE, expect, go, matrixRow, menu, modal, openRule, optionsOf, panel, PROJECT,
+  test, toast, TRAINING,
 } from "./fixtures";
 
 /* Матрица «правила × подразделения», панель правила и мастер. */
@@ -77,7 +78,7 @@ test("поиск и фильтр по приказу в матрице", async (
   await expect(matrixRow(app, DEADLINE)).toBeVisible();
   await expect(matrixRow(app, PROJECT)).toHaveCount(0);
   await app.getByPlaceholder("Поиск по правилам…").fill("");
-  await app.locator("#tab-rules").getByLabel("Приказ").selectOption({ label: "ПР-02" });
+  await choose(app.locator("#tab-rules").getByLabel("Приказ"), "ПР-02");
   await expect(matrixRow(app, TRAINING)).toBeVisible();
   await expect(matrixRow(app, DEADLINE)).toHaveCount(0);
 });
@@ -117,8 +118,8 @@ test("панель: новое исключение заводится канд�
   await openRule(app, PROJECT);
   await panel(app).getByRole("button", { name: "+ Исключение" }).click();
   const dialog = modal(app);
-  await expect(dialog.getByLabel("Подразделение").locator("option")).toHaveText(["АГД", "УЦТ"]);
-  await dialog.getByLabel("Подразделение").selectOption({ label: "УЦТ" });
+  expect(await optionsOf(dialog.getByLabel("Подразделение"))).toEqual(["АГД", "УЦТ"]);
+  await choose(dialog.getByLabel("Подразделение"), "УЦТ");
   await dialog.getByLabel("Откуда договорённость").fill("пилотные цели без проекта");
   await dialog.getByRole("button", { name: "Оставить кандидатом" }).click();
   await expect(panel(app).locator('[data-exception="UCT"]')).toContainText("кандидат — не утверждено");
@@ -191,8 +192,8 @@ test("мастер: новое правило от пункта до приме�
   await w.locator(".box", { hasText: "УЦТ" }).click();
   await w.getByRole("button", { name: "+ Добавить исключение" }).click();
   const row = w.locator(".scope-row");
-  await expect(row.getByLabel("Подразделение").locator("option")).toHaveText(["АГД", "УЦТ"]);
-  await row.getByLabel("Статус исключения").selectOption("active");
+  expect(await optionsOf(row.getByLabel("Подразделение"))).toEqual(["АГД", "УЦТ"]);
+  await choose(row.getByLabel("Статус исключения"), "действует");
   await w.getByRole("button", { name: /Далее/ }).click();
   await expect(toast(app, "нужно основание")).toBeVisible();
   await row.getByLabel("Основание").fill("ПР-01 п. 4.2");

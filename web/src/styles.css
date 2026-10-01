@@ -72,9 +72,27 @@ b,strong{font-weight:700}
 .btn.lg{height:52px;padding:0 30px;font-size:16px}
 .btn[disabled]{opacity:.5;cursor:not-allowed}
 .menu-btn{min-width:40px;padding:0 10px;font-size:18px;line-height:1;letter-spacing:1px;font-weight:700}
-input[type=text],input[type=date],input[type=number],input[type=search],textarea,select{width:100%;padding:10px 14px;
+input[type=text],input[type=date],input[type=number],input[type=search],textarea{width:100%;padding:10px 14px;
   border:1px solid var(--line);border-radius:12px;background:var(--panel)}
-input:focus,textarea:focus,select:focus{outline:2px solid var(--soft);border-color:var(--brand)}
+input:focus,textarea:focus,.select:focus-visible,.select.open{outline:2px solid var(--soft);border-color:var(--brand)}
+
+/* Выпадающий список (ui/Select.tsx): поле со своей стрелкой и меню в стиле интерфейса. */
+.select{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;min-height:40px;padding:8px 14px;
+  border:1px solid var(--line);border-radius:12px;background:var(--panel);cursor:pointer;text-align:left}
+.select:hover{border-color:var(--ink-3)}
+.select-value{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.select svg{width:12px;height:12px;flex:none;fill:none;stroke:var(--ink-3);stroke-width:1.6;stroke-linecap:round;
+  stroke-linejoin:round;transition:transform .15s}
+.select.open svg{transform:rotate(180deg);stroke:var(--brand)}
+.select.pill{padding-left:18px;padding-right:16px}
+.select-pop{position:fixed;z-index:90;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:14px;
+  box-shadow:var(--shadow-lg);padding:5px;min-width:160px}
+.select-pop [role=option]{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 12px;border-radius:9px;
+  cursor:pointer;font-weight:500;font-size:13.5px}
+.select-pop [role=option][data-active="true"]{background:var(--panel-2)}
+.select-pop [role=option][aria-selected="true"]{color:var(--brand);background:var(--soft)}
+.select-pop svg{width:12px;height:12px;flex:none;fill:none;stroke:var(--brand);stroke-width:1.8;stroke-linecap:round;
+  stroke-linejoin:round}
 textarea{resize:vertical;min-height:78px;line-height:1.5}
 .pill{border-radius:50px !important}
 label.check{display:inline-flex;align-items:center;gap:7px;cursor:pointer;color:var(--ink-2);white-space:nowrap}
@@ -207,8 +225,10 @@ table{width:100%;border-collapse:collapse}
 
 /* ------------------------------- проверка --------------------------------- */
 .check-page{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:20px;align-items:start}
-.hero{background:linear-gradient(135deg,#e5f1ff 0%,#f4f8fc 70%);border-radius:28px;padding:22px 30px;border:1px solid #d6e6fb}
-.hero textarea{margin-top:14px;font-size:16px;line-height:24px;border-radius:16px;box-shadow:var(--shadow);min-height:76px}
+.hero{background:linear-gradient(135deg,#e5f1ff 0%,#f4f8fc 70%);border-radius:24px;padding:20px 26px;border:1px solid #d6e6fb}
+.hero h1{font-size:22px;line-height:28px}
+.hero textarea{margin-top:12px;font-size:14px;line-height:21px;border-radius:14px;box-shadow:var(--shadow);min-height:68px}
+.hero .select,.hero .btn{height:44px;min-height:44px;font-size:14px}
 .verdict{padding:20px 24px;margin-top:16px}
 .vitem{display:grid;grid-template-columns:28px minmax(0,1fr);gap:4px 12px;padding:12px 0;border-top:1px solid var(--line-soft)}
 .ico{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-size:13px;font-weight:700;flex:none}
@@ -260,7 +280,7 @@ table{width:100%;border-collapse:collapse}
 .optlist input{margin-top:3px;flex:none;width:auto;accent-color:var(--brand)}
 .optlist .d{color:var(--ink-3);font-size:12.5px}
 .prop-row{display:grid;grid-template-columns:minmax(120px,1fr) 118px minmax(160px,2fr) auto;gap:8px;align-items:start;margin-bottom:8px}
-.prop-row.removed input,.prop-row.removed select{opacity:.45;text-decoration:line-through}
+.prop-row.removed input,.prop-row.removed .select{opacity:.45;text-decoration:line-through}
 .popup{position:fixed;z-index:70;min-width:150px;background:var(--panel);border:1px solid var(--line);border-radius:14px;
   box-shadow:var(--shadow-lg);padding:5px;display:flex;flex-direction:column}
 .popup button{background:none;border:0;text-align:left;padding:8px 12px;border-radius:9px;cursor:pointer;font-size:13px;

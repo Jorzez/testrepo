@@ -1,4 +1,6 @@
-import { clauseBlock, expect, go, menu, modal, orderDoc, orderItem, panel, ruleCard, test, toast, TRAINING } from "./fixtures";
+import {
+  choose, clauseBlock, expect, go, menu, modal, orderDoc, orderItem, panel, ruleCard, test, toast, TRAINING,
+} from "./fixtures";
 
 /* Раздел «Приказы»: приказ как документ. Сценарии, на которых прежний
    интерфейс уже ломался или которые легко сломать при переделке. */
@@ -41,14 +43,14 @@ test("редактор произвольных свойств", async ({ app })
   await modal(app).getByRole("button", { name: "+ Свойство" }).click();
   const row = modal(app).locator(".prop-row").last();
   await row.getByLabel("Имя свойства").fill("priority");
-  await row.getByLabel("Тип свойства").selectOption("number");
+  await choose(row.getByLabel("Тип свойства"), "число");
   await row.getByLabel("Значение свойства").fill("3");
   await modal(app).getByRole("button", { name: "Сохранить" }).click();
   await expect(toast(app, "Свойства сохранены")).toBeVisible();
 
   await menu(orderDoc(app), "Свойства");
   const saved = modal(app).locator('.prop-row[data-prop="priority"]');
-  await expect(saved.getByLabel("Тип свойства")).toHaveValue("number");
+  await expect(saved.getByLabel("Тип свойства")).toHaveAttribute("data-value", "number");
   await expect(saved.getByLabel("Значение свойства")).toHaveValue("3");
   await saved.getByTitle("Удалить свойство").click();
   await modal(app).getByRole("button", { name: "Сохранить" }).click();
@@ -56,7 +58,7 @@ test("редактор произвольных свойств", async ({ app })
 
   await menu(orderDoc(app), "Свойства");
   await expect(modal(app).locator('.prop-row[data-prop="priority"]')).toHaveCount(0);
-  await expect(modal(app).locator('.prop-row[data-prop="date"] select')).toHaveValue("date");
+  await expect(modal(app).locator('.prop-row[data-prop="date"] .select')).toHaveText("дата");
 });
 
 test("правка ключа проверяет уникальность", async ({ app }) => {
@@ -75,7 +77,7 @@ test("перенос пункта в другой приказ", async ({ app })
   await go(app, "Приказы");
   await orderItem(app, "ПР-02").click();
   await menu(clauseBlock(app, "3.1"), "Перенести");
-  await modal(app).getByLabel("Приказ").selectOption({ label: "ПР-01" });
+  await choose(modal(app).getByLabel("Приказ"), "ПР-01");
   await modal(app).getByRole("button", { name: "Сохранить" }).click();
   await expect(toast(app, "Пункт перенесён")).toBeVisible();
   await expect(orderItem(app, "ПР-01")).toContainText("3 п. · 3 прав.");

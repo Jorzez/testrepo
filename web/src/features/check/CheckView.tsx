@@ -6,6 +6,7 @@ import { useCatalog } from "../../state/catalog";
 import { cellState } from "../../state/scope";
 import { activeRuleRefs, allRuleRefs } from "../../state/tree";
 import { Chip, Spinner } from "../../ui/common";
+import { Select } from "../../ui/Select";
 import { errorText, useToast } from "../../ui/Toasts";
 
 /* Главный экран: проверка формулировки цели. Ответ — человеческим языком:
@@ -57,13 +58,11 @@ export function CheckView({ hidden }: { hidden: boolean }) {
             <textarea id="goalInput" aria-label="Формулировка цели" value={goal} onChange={(e) => setGoal(e.target.value)}
               placeholder="Например: снизить долю просроченных заявок до 5% к 31.12.2025 в рамках проекта «Альфа»" />
             <div className="row wrap" style={{ marginTop: 14 }}>
-              <select id="departmentInput" aria-label="Подразделение" className="pill" value={departmentId}
-                style={{ width: 320, height: 52, fontWeight: 500 }}
-                onChange={(e) => { setDepartmentId(e.target.value); setResult(null); }}>
-                <option value="">Подразделение не указано</option>
-                {options.map((d) => <option key={d.departmentId} value={d.departmentId}>{d.name || d.departmentId}</option>)}
-              </select>
-              <button className="btn primary lg" disabled={busy} onClick={() => void run()}>
+              <Select id="departmentInput" ariaLabel="Подразделение" className="pill" value={departmentId}
+                style={{ width: 320 }} onChange={(next) => { setDepartmentId(next); setResult(null); }}
+                options={[{ value: "", label: "Подразделение не указано" },
+                  ...options.map((d) => ({ value: d.departmentId!, label: d.name || d.departmentId! }))]} />
+              <button className="btn primary" disabled={busy} onClick={() => void run()}>
                 {busy ? <><Spinner /> Проверяем…</> : "Проверить"}
               </button>
             </div>

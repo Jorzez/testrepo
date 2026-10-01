@@ -4,6 +4,7 @@ import { api, type ScopeException } from "../../api/client";
 import type { ExceptionStatus, RuleType } from "../../api/types";
 import { useCatalog, type WizardPreset } from "../../state/catalog";
 import { Chip, Spinner } from "../../ui/common";
+import { Select } from "../../ui/Select";
 import { errorText, useToast } from "../../ui/Toasts";
 
 /* Мастер нового правила. Четыре шага в том порядке, в каком о правиле
@@ -188,12 +189,12 @@ export function RuleWizard({ preset }: { preset: WizardPreset }) {
               <h2>К какому пункту приказа относится правило?</h2>
               <div className="field" style={{ marginTop: 16 }}>
                 <label htmlFor="wizOrder">Приказ</label>
-                <select id="wizOrder" value={orderId} onChange={(e) => {
-                  setOrderId(e.target.value);
-                  setClauseId(orders.find((o) => o.nodeId === e.target.value)?.clauses[0]?.nodeId ?? "");
-                }}>
-                  {orders.map((o) => <option key={o.nodeId} value={o.nodeId}>{o.number} · {o.title}</option>)}
-                </select>
+                <Select id="wizOrder" value={orderId} placeholder="Приказов нет"
+                  options={orders.map((o) => ({ value: o.nodeId, label: `${o.number} · ${o.title}` }))}
+                  onChange={(next) => {
+                    setOrderId(next);
+                    setClauseId(orders.find((o) => o.nodeId === next)?.clauses[0]?.nodeId ?? "");
+                  }} />
                 {!orders.length && <div className="hint">Приказов нет — заведите приказ в разделе «Приказы».</div>}
               </div>
               <div className="seg" role="group" aria-label="Пункт">
@@ -326,16 +327,13 @@ export function RuleWizard({ preset }: { preset: WizardPreset }) {
               <div style={{ marginTop: 12 }}>
                 {exceptions.map((row) => (
                   <div key={row.key} className="scope-row" data-exception={row.departmentId}>
-                    <select aria-label="Подразделение" value={row.departmentId}
-                      onChange={(e) => patchException(row.key, { departmentId: e.target.value })}>
-                      {applicable.filter((d) => d.departmentId === row.departmentId || freeForException.includes(d))
-                        .map((d) => <option key={d.departmentId} value={d.departmentId}>{d.name || d.departmentId}</option>)}
-                    </select>
-                    <select aria-label="Статус исключения" value={row.status}
-                      onChange={(e) => patchException(row.key, { status: e.target.value as ExceptionStatus })}>
-                      <option value="candidate">кандидат</option>
-                      <option value="active">действует</option>
-                    </select>
+                    <Select ariaLabel="Подразделение" value={row.departmentId}
+                      onChange={(departmentId) => patchException(row.key, { departmentId })}
+                      options={applicable.filter((d) => d.departmentId === row.departmentId || freeForException.includes(d))
+                        .map((d) => ({ value: d.departmentId!, label: d.name || d.departmentId! }))} />
+                    <Select ariaLabel="Статус исключения" value={row.status}
+                      onChange={(status) => patchException(row.key, { status: status as ExceptionStatus })}
+                      options={[{ value: "candidate", label: "кандидат" }, { value: "active", label: "действует" }]} />
                     <input type="text" aria-label="Основание" value={row.basis} placeholder="пункт приказа, напр. ПР-01 п. 4.2"
                       onChange={(e) => patchException(row.key, { basis: e.target.value })} />
                     <button type="button" className="btn sm ghost" title="Убрать исключение"

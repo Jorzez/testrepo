@@ -5,6 +5,7 @@ import type { NodeProps } from "../api/types";
 import { useCatalog } from "../state/catalog";
 import { Spinner } from "../ui/common";
 import { Overlay, useDialogs } from "../ui/Dialogs";
+import { Select } from "../ui/Select";
 import { errorText, useToast } from "../ui/Toasts";
 
 /* Редактор произвольных свойств узла: добавить поле, сменить тип,
@@ -107,10 +108,8 @@ function PropertiesDialog({ node, close }: { node: NodeProps; close: () => void 
               <div key={row.id} className={`prop-row ${row.removed ? "removed" : ""}`} data-prop={row.key}>
                 <input type="text" aria-label="Имя свойства" value={row.key} placeholder="имя свойства"
                   readOnly={!row.isNew} onChange={(e) => update(row.id, { key: e.target.value })} />
-                <select aria-label="Тип свойства" value={row.type}
-                  onChange={(e) => update(row.id, { type: e.target.value as PropType })}>
-                  {PROP_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-                </select>
+                <Select ariaLabel="Тип свойства" value={row.type} options={PROP_TYPES}
+                  onChange={(type) => update(row.id, { type: type as PropType })} />
                 <input type="text" aria-label="Значение свойства" value={row.value} placeholder="значение"
                   onChange={(e) => update(row.id, { value: e.target.value })} />
                 <button type="button" className="btn sm ghost" title="Удалить свойство"
