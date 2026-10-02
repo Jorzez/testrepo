@@ -68,11 +68,15 @@ mkdir -p "$OUT" "$MODELS_DIR"
 
 # --- 1. Колёса Python -------------------------------------------------------
 log "Колёса Python под $TARGET_PLATFORM → api/vendor/wheels"
-rm -rf api/vendor/wheels
-mkdir -p api/vendor/wheels
+# Качаем во временный каталог и подменяем старый только после успеха: иначе
+# сбой docker (демон не запущен, нет сети) оставляет api/vendor/wheels пустым,
+# и образ API перестаёт собираться — в том числе в онлайн-режиме.
+rm -rf api/vendor/wheels.new
+mkdir -p api/vendor/wheels.new
+trap 'rm -rf "$ROOT/api/vendor/wheels.new"' EXIT
 docker run --rm --platform "$TARGET_PLATFORM" -v "$ROOT/api:/src" "$PYTHON_IMAGE" \
   pip download --quiet --disable-pip-version-check \
-    --dest /src/vendor/wheels \
+    --dest /src/vendor/wheels.new \
     --requirement /src/requirements.txt \
     --platform "manylinux2014_${WHEEL_ARCH}" \
     --platform "manylinux_2_17_${WHEEL_ARCH}" \
@@ -81,7 +85,9 @@ docker run --rm --platform "$TARGET_PLATFORM" -v "$ROOT/api:/src" "$PYTHON_IMAGE
     --python-version 3.12 --implementation cp \
     --abi cp312 --abi abi3 --abi none \
     --only-binary=:all:
-(cd api/vendor/wheels && ls -1 *.whl | xargs shasum -a 256 > MANIFEST.sha256)
+(cd api/vendor/wheels.new && ls -1 *.whl | xargs shasum -a 256 > MANIFEST.sha256)
+rm -rf api/vendor/wheels
+mv api/vendor/wheels.new api/vendor/wheels
 echo "колёс: $(ls -1 api/vendor/wheels/*.whl | wc -l | tr -d ' ')"
 
 # --- 2. Образ API без сети --------------------------------------------------
