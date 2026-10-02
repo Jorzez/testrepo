@@ -1,11 +1,32 @@
 /* Фейковый API в памяти: для `npm run dev:mock` и для e2e-тестов.
 
    Повторяет ровно то поведение настоящего API, на которое опирается
-   интерфейс: форма ответов, 404/409, каскадное удаление, запрет удалять
-   используемый атрибут, защита от двойников по написанию. Это не замена
-   тестам API — те живут в api/tests и проверяют настоящий код. */
+   интерфейс: форма ответов, 401/403/404/409, вход и роли, каскадное
+   удаление, запрет удалять используемый атрибут, защита от двойников по
+   написанию. Это не замена тестам API — те живут в api/tests и проверяют
+   настоящий код.
+
+   Учётки фейка: admin, editor, viewer — пароль у всех MOCK_PASSWORD.
+   Сессия одна на весь экземпляр: фейк не различает браузеры. */
 
 type Props = Record<string, unknown>;
+type Role = "viewer" | "editor" | "admin";
+
+export const MOCK_PASSWORD = "demo";
+const RANK: Record<Role, number> = { viewer: 0, editor: 1, admin: 2 };
+const ROLE_NAMES: Record<Role, string> = { viewer: "читатель", editor: "редактор", admin: "администратор" };
+const LOGIN_FAILED = "Неверный логин или пароль, либо доступ к интерфейсу не назначен";
+
+interface MockUser {
+  login: string;
+  role: Role;
+  status: "active" | "blocked";
+  displayName: string | null;
+  builtin: boolean;
+  createdAt: string | null;
+  createdBy: string | null;
+  lastLoginAt: string | null;
+}
 type Label = "Order" | "Clause" | "Rule" | "ViolationExample" | "CheckTarget" | "Department";
 
 /** (:Rule)-[:EXCEPT_IN {status, basis, note}]->(:Department) */
@@ -94,8 +115,84 @@ function seed() {
   return { nodes, appliesTo, references, onlyIn, exceptions };
 }
 
-export function createBackend() {
+export function createBackend(options: { user?: string } = {}) {
   const data = seed();
+  const mockUser = (login: string, role: Role, displayName: string | null, builtin = false): MockUser =>
+    ({ login, role, status: "active", displayName, builtin, createdAt: builtin ? null : "2025-01-10T09:00:00+00:00",
+      createdBy: builtin ? null : "admin", lastLoginAt: null });
+  const users = new Map<string, MockUser>([
+    mockUser("admin", "admin", null, true),
+    mockUser("editor", "editor", "Елена Редактор"),
+    mockUser("viewer", "viewer", "Виктор Читатель"),
+  ].map((u) => [u.login, u]));
+  /** Кто вошёл. options.user — сразу вошедший пользователь, для e2e-тестов. */
+  let current: string | null = options.user ?? null;
+
+  const account = (u: MockUser) => ({ login: u.login, role: u.role, displayName: u.displayName });
+  /** Вошедший пользователь с ролью не ниже указанной — как auth.require в API. */
+  function need(role: Role) {
+    const u = current ? users.get(current) : undefined;
+    if (!u || u.status !== "active") { current = null; throw new HttpError(401, "Требуется вход"); }
+    if (RANK[u.role] < RANK[role]) throw new HttpError(403, `Недостаточно прав: нужна роль «${ROLE_NAMES[role]}»`);
+    return u;
+  }
+  const userOf = (login: string) => {
+    const u = users.get(login);
+    if (!u) throw new HttpError(404, `Пользователя '${login}' нет в реестре`);
+    return u;
+  };
+  const guardBuiltin = (u: MockUser) => {
+    if (u.builtin)
+      throw new HttpError(409, `${u.login} — администратор из AUTH_ADMIN_LOGINS: меняется в настройках сервера`);
+  };
+
+  function authRoute(method: string, path: string, body: any): unknown {
+    if (method === "POST" && path === "/auth/login") {
+      const login = String(body?.login ?? "").trim().toLowerCase();
+      const u = users.get(login);
+      if (!u || u.status !== "active" || body?.password !== MOCK_PASSWORD) throw new HttpError(401, LOGIN_FAILED);
+      current = login;
+      u.lastLoginAt = new Date().toISOString();
+      return account(u);
+    }
+    if (method === "POST" && path === "/auth/logout") { current = null; return null; }
+    if (method === "GET" && path === "/auth/me") return account(need("viewer"));
+
+    const me = need("admin");
+    if (method === "GET" && path === "/auth/users")
+      return { users: [...users.values()].sort((a, b) => a.login.localeCompare(b.login)) };
+    if (method === "POST" && path === "/auth/users") {
+      const login = String(body.login).trim().toLowerCase();
+      if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(login))
+        throw new HttpError(409, "Логин — латинские буквы, цифры, точка, дефис и подчёркивание, до 64 символов");
+      if (users.has(login)) throw new HttpError(409, `Пользователь '${login}' уже есть в реестре`);
+      const created = { ...mockUser(login, body.role, String(body.displayName ?? "").trim() || null),
+        createdAt: new Date().toISOString(), createdBy: me.login };
+      users.set(login, created);
+      return created;
+    }
+    const p = path.match(/^\/auth\/users\/([^/]+)$/);
+    if (p && method === "PATCH") {
+      const u = userOf(decodeURIComponent(p[1]));
+      if (body.role !== undefined || body.status !== undefined) {
+        guardBuiltin(u);
+        if (u.login === me.login)
+          throw new HttpError(409, "Свою роль и статус менять нельзя — попросите другого администратора");
+      }
+      if (body.role) u.role = body.role;
+      if (body.status) u.status = body.status;
+      if ("displayName" in body) u.displayName = String(body.displayName ?? "").trim() || null;
+      return u;
+    }
+    if (p && method === "DELETE") {
+      const u = userOf(decodeURIComponent(p[1]));
+      guardBuiltin(u);
+      if (u.login === me.login) throw new HttpError(409, "Свою учётную запись удалить нельзя");
+      users.delete(u.login);
+      return { deleted: u.login };
+    }
+    throw new HttpError(404, `Not Found: ${method} ${path}`);
+  }
   const nodes = new Map(data.nodes.map((n) => [n.id, n]));
   let appliesTo = data.appliesTo;
   let references = data.references;
@@ -434,6 +531,11 @@ export function createBackend() {
     let p: RegExpMatchArray | null;
 
     if (method === "GET" && path === "/health") return { status: "ok" };
+    if (path.startsWith("/auth/")) return authRoute(method, path, body);
+    // Те же права, что в api/routes.py: читать может любой вошедший, менять —
+    // редактор, удалять навсегда и чинить идентификаторы — администратор.
+    need(method === "DELETE" || path === "/catalog/repair-identifiers" ? "admin"
+      : method === "GET" || path === "/check-goal" ? "viewer" : "editor");
     if (method === "GET" && path === "/catalog/tree") return tree(archived);
     if (method === "GET" && path === "/catalog/check-targets") return { targets: targets(archived) };
     if (method === "GET" && path === "/catalog/clauses")
@@ -520,8 +622,10 @@ export function createBackend() {
       const parsed = new URL(url, "http://mock");
       try {
         const result = route(method.toUpperCase(), parsed.pathname, parsed.searchParams, body);
-        return { status: method.toUpperCase() === "POST" && /^\/catalog\/(orders|clauses|rules|examples|check-targets|departments)$/
-          .test(parsed.pathname) ? 201 : 200, body: result };
+        if (parsed.pathname === "/auth/logout") return { status: 204, body: null };
+        return { status: method.toUpperCase() === "POST"
+          && /^\/(catalog\/(orders|clauses|rules|examples|check-targets|departments)|auth\/users)$/
+            .test(parsed.pathname) ? 201 : 200, body: result };
       } catch (err) {
         if (err instanceof HttpError) return { status: err.status, body: { detail: err.message } };
         return { status: 500, body: { detail: String(err) } };

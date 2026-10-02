@@ -2,26 +2,42 @@ import { expect, test as base, type Locator, type Page } from "@playwright/test"
 
 import { createBackend } from "../mock/backend";
 
-/* Каждый тест получает свой фейковый API. Запросы идут на тот же origin
-   (/mockapi), поэтому CORS и preflight не мешают перехвату.
+/* Каждый тест получает свой фейковый API: перехватываются запросы к /api
+   на том же origin — ровно туда интерфейс ходит и в настоящей сборке.
+   По умолчанию пользователь уже вошёл администратором; другая роль —
+   test.use({ role: "viewer" }), экран входа — test.use({ role: null }).
 
    В данных фейка: R-1.1 (проект) действует только в УЦТ и АГД; R-2.4 (срок)
    не применяется в АГД по «ПР-01 п. 2.5», а для финансового управления
    исключение — кандидат; приказ ПР-02 заведён без бизнес-ключей. */
 
-export const test = base.extend<{ app: Page }>({
-  app: async ({ page }, use) => {
-    const backend = createBackend();
-    await page.route("**/mockapi/**", async (route) => {
-      const request = route.request();
-      const url = new URL(request.url());
-      const raw = request.postData();
-      const reply = backend.handle(request.method(), url.pathname.replace(/^\/mockapi/, "") + url.search,
-        raw ? JSON.parse(raw) : undefined);
-      await route.fulfill({ status: reply.status, contentType: "application/json", body: JSON.stringify(reply.body) });
-    });
-    await page.goto("/?api=/mockapi");
-    await expect(page.getByText("API на связи")).toBeVisible();
+export type MockRole = "admin" | "editor" | "viewer" | null;
+
+/** Запрос к API, а не к файлу сборки: /api/… на origin страницы. */
+export const isApi = (url: URL) => url.pathname.startsWith("/api/");
+
+/** Подключить к странице фейковый API; логин совпадает с названием роли. */
+export async function mockApi(page: Page, role: MockRole) {
+  const backend = createBackend({ user: role ?? undefined });
+  await page.route(isApi, async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const raw = request.postData();
+    const reply = backend.handle(request.method(), url.pathname.replace(/^\/api/, "") + url.search,
+      raw ? JSON.parse(raw) : undefined);
+    if (reply.status === 204) await route.fulfill({ status: 204 });
+    else await route.fulfill({ status: reply.status, contentType: "application/json", body: JSON.stringify(reply.body) });
+  });
+  return backend;
+}
+
+export const test = base.extend<{ app: Page; role: MockRole }>({
+  role: ["admin", { option: true }],
+  app: async ({ page, role }, use) => {
+    await mockApi(page, role);
+    await page.goto("/");
+    if (role) await expect(page.getByText("API на связи")).toBeVisible();
+    else await expect(page.getByRole("button", { name: "Войти" })).toBeVisible();
     await use(page);
   },
 });

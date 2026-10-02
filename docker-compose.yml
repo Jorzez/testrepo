@@ -6,6 +6,12 @@
 #     скачиваются с Hugging Face; HF_HUB_OFFLINE запрещает любые попытки.
 #   * Образ API собирается из колёс в api/vendor/wheels, pip к PyPI не ходит.
 #
+#   * Наружу опубликован только интерфейс (порт 3000). Neo4j, vLLM и API
+#     слушают 127.0.0.1: у Neo4j Browser и vLLM своей проверки прав на
+#     каталог нет, а API доступен пользователям через nginx интерфейса (/api).
+#     С рабочего места к ним ходят через SSH-туннель:
+#       ssh -L 7474:localhost:7474 -L 7687:localhost:7687 <сервер>
+#
 # Подготовка набора на машине с интернетом: scripts/offline/prepare.sh
 # Установка на сервере:                     scripts/offline/install.sh
 
@@ -17,8 +23,8 @@ services:
     environment:
       NEO4J_AUTH: neo4j/${NEO4J_PASSWORD}
     ports:
-      - "7474:7474"    # браузер
-      - "7687:7687"    # bolt
+      - "127.0.0.1:7474:7474"    # браузер
+      - "127.0.0.1:7687:7687"    # bolt
     volumes:
       - neo4j_data:/data
       - ./neo4j/init:/init:ro
@@ -71,7 +77,7 @@ services:
       --max-model-len 8192
       --gpu-memory-utilization 0.90
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - ${MODELS_DIR:-./models}:/models:ro
     healthcheck:
@@ -105,13 +111,31 @@ services:
       LLM_MAX_RETRIES: ${LLM_MAX_RETRIES:-2}
       BULK_MAX_WORKERS: ${BULK_MAX_WORKERS:-4}
       MAX_GOALS_PER_REQUEST: ${MAX_GOALS_PER_REQUEST:-200}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Вход в интерфейс: пароль проверяет каталог, роли — реестр в Neo4j.
+      AUTH_BACKEND: ${AUTH_BACKEND:-ldap}
+      AUTH_ADMIN_LOGINS: ${AUTH_ADMIN_LOGINS:-}
+      AUTH_STATIC_USERS: ${AUTH_STATIC_USERS:-}
+      LDAP_URL: ${LDAP_URL:-}
+      LDAP_USER_TEMPLATE: ${LDAP_USER_TEMPLATE:-}
+      LDAP_CA_FILE: ${LDAP_CA_FILE:-}
+      LDAP_STARTTLS: ${LDAP_STARTTLS:-0}
+      LDAP_TIMEOUT_SECONDS: ${LDAP_TIMEOUT_SECONDS:-5}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-1}
+      SESSION_IDLE_MINUTES: ${SESSION_IDLE_MINUTES:-30}
+      SESSION_MAX_HOURS: ${SESSION_MAX_HOURS:-12}
+      LOGIN_MAX_ATTEMPTS: ${LOGIN_MAX_ATTEMPTS:-5}
+      LOGIN_MAX_ATTEMPTS_PER_IP: ${LOGIN_MAX_ATTEMPTS_PER_IP:-30}
+      LOGIN_LOCK_MINUTES: ${LOGIN_LOCK_MINUTES:-15}
+      ENABLE_DOCS: ${ENABLE_DOCS:-0}
     ports:
-      - "8080:8080"
+      # Только с самого сервера: /ready, диагностика, Swagger на стенде.
+      - "127.0.0.1:8080:8080"
     volumes:
       # Смонтировано на запись, чтобы export_graph.py мог записать seed.cypher.
       - ./neo4j/init:/init
+      # Корневой сертификат домена для LDAPS (LDAP_CA_FILE=/certs/<файл>).
+      - ./certs:/certs:ro
     depends_on:
       neo4j:
         condition: service_healthy
@@ -127,6 +151,8 @@ services:
     build: ./web
     pull_policy: never
     restart: unless-stopped
+    environment:
+      TRUSTED_PROXY: ${TRUSTED_PROXY:-127.0.0.1}
     ports:
       - "3000:80"
 

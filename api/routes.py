@@ -6,15 +6,20 @@
 
 import logging
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
+import auth
 import catalog
 import diagnostics
 import schemas
 
 log = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/catalog", tags=["catalog"])
+# Читать каталог может любой вошедший пользователь; менять — редактор;
+# необратимое (физическое удаление, массовый ремонт) — только администратор.
+router = APIRouter(prefix="/catalog", tags=["catalog"], dependencies=[Depends(auth.viewer)])
+EDITOR = [Depends(auth.editor)]
+ADMIN = [Depends(auth.admin)]
 
 
 def _handle(func, *args, **kwargs):
@@ -68,13 +73,13 @@ def get_node(node_id: str):
     return _handle(catalog.get_node, node_id)
 
 
-@router.patch("/nodes/{node_id}/properties")
+@router.patch("/nodes/{node_id}/properties", dependencies=EDITOR)
 def patch_node_properties(node_id: str, body: schemas.PropertiesRequest):
     """Правка произвольных свойств. null в значении удаляет свойство."""
     return _handle(catalog.update_properties, node_id, dict(body.properties))
 
 
-@router.post("/nodes/{node_id}/status")
+@router.post("/nodes/{node_id}/status", dependencies=EDITOR)
 def post_node_status(node_id: str, body: schemas.StatusRequest):
     return _handle(catalog.set_status, node_id, body.status)
 
@@ -85,7 +90,7 @@ def get_descendants(node_id: str):
     return _handle(catalog.count_descendants, node_id)
 
 
-@router.delete("/nodes/{node_id}")
+@router.delete("/nodes/{node_id}", dependencies=ADMIN)
 def delete_node(
     node_id: str,
     force: bool = Query(False, description="Удалить без предварительного архивирования"),
@@ -101,17 +106,17 @@ def delete_node(
 # ------------------------------- создание -----------------------------------
 
 
-@router.post("/orders", status_code=201)
+@router.post("/orders", status_code=201, dependencies=EDITOR)
 def post_order(body: schemas.OrderCreate):
     return _handle(catalog.create_order, body.number, body.title, body.date, body.orderId)
 
 
-@router.post("/clauses", status_code=201)
+@router.post("/clauses", status_code=201, dependencies=EDITOR)
 def post_clause(body: schemas.ClauseCreate):
     return _handle(catalog.create_clause, body.orderNodeId, body.code, body.text, body.clauseId)
 
 
-@router.post("/rules", status_code=201)
+@router.post("/rules", status_code=201, dependencies=EDITOR)
 def post_rule(body: schemas.RuleCreate):
     return _handle(
         catalog.create_rule, body.clauseNodeId, body.type, body.description,
@@ -119,18 +124,18 @@ def post_rule(body: schemas.RuleCreate):
     )
 
 
-@router.post("/examples", status_code=201)
+@router.post("/examples", status_code=201, dependencies=EDITOR)
 def post_example(body: schemas.ExampleCreate):
     return _handle(catalog.create_example, body.ruleNodeId, body.text,
                    body.isViolation, body.exampleId)
 
 
-@router.post("/check-targets", status_code=201)
+@router.post("/check-targets", status_code=201, dependencies=EDITOR)
 def post_check_target(body: schemas.CheckTargetCreate):
     return _handle(catalog.create_check_target, body.name, body.description)
 
 
-@router.post("/departments", status_code=201)
+@router.post("/departments", status_code=201, dependencies=EDITOR)
 def post_department(body: schemas.DepartmentCreate):
     return _handle(catalog.create_department, body.departmentId, body.name)
 
@@ -138,29 +143,29 @@ def post_department(body: schemas.DepartmentCreate):
 # -------------------------------- связи -------------------------------------
 
 
-@router.put("/rules/{node_id}/targets")
+@router.put("/rules/{node_id}/targets", dependencies=EDITOR)
 def put_rule_targets(node_id: str, body: schemas.RuleTargets):
     return {"targets": _handle(catalog.set_rule_targets, node_id, body.targets)}
 
 
-@router.put("/rules/{node_id}/departments")
+@router.put("/rules/{node_id}/departments", dependencies=EDITOR)
 def put_rule_departments(node_id: str, body: schemas.RuleScope):
     """Область действия правила: «действует только в» и исключения."""
     return _handle(catalog.set_rule_scope, node_id, body.only,
                    [e.model_dump() for e in body.exceptions])
 
 
-@router.put("/clauses/{node_id}/references")
+@router.put("/clauses/{node_id}/references", dependencies=EDITOR)
 def put_clause_references(node_id: str, body: schemas.ClauseReferences):
     return {"references": _handle(catalog.set_clause_references, node_id, body.references)}
 
 
-@router.post("/clauses/{node_id}/move")
+@router.post("/clauses/{node_id}/move", dependencies=EDITOR)
 def post_move_clause(node_id: str, body: schemas.MoveRequest):
     return _handle(catalog.move_clause, node_id, body.parentNodeId)
 
 
-@router.post("/rules/{node_id}/move")
+@router.post("/rules/{node_id}/move", dependencies=EDITOR)
 def post_move_rule(node_id: str, body: schemas.MoveRequest):
     return _handle(catalog.move_rule, node_id, body.parentNodeId)
 
@@ -168,7 +173,7 @@ def post_move_rule(node_id: str, body: schemas.MoveRequest):
 # ------------------------------- ремонт -------------------------------------
 
 
-@router.post("/repair-identifiers")
+@router.post("/repair-identifiers", dependencies=ADMIN)
 def post_repair_identifiers():
     """Проставляет недостающие orderId / clauseId / ruleId / exampleId и статусы."""
     return _handle(catalog.repair_identifiers)

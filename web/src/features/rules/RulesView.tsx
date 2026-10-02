@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import type { Department, Rule } from "../../api/types";
+import { useAuth } from "../../state/auth";
 import { useCatalog } from "../../state/catalog";
 import { cellState, type CellState } from "../../state/scope";
 import { allRuleRefs, normalizeQuery, ruleMatches, type RuleRef } from "../../state/tree";
@@ -38,6 +39,7 @@ export function RulesView({ hidden }: { hidden: boolean }) {
 function Matrix() {
   const { orders, departments, showArchived, reload, openRule, openWizard, panelRule } = useCatalog();
   const actions = useActions();
+  const { canEdit } = useAuth();
   const editCell = useCellEditor();
   const [search, setSearch] = useState("");
   const [orderFilter, setOrderFilter] = useState("");
@@ -76,7 +78,7 @@ function Matrix() {
         const key = rule.nodeId + d.nodeId;
         return (
           <td key={d.nodeId}>
-            <button className={`cell-btn ${focus === key ? "focus" : ""}`} data-state={state.kind}
+            <button className={`cell-btn ${focus === key ? "focus" : ""}`} data-state={state.kind} disabled={!canEdit}
               aria-label={`${rule.description} — ${d.name || d.departmentId}: ${STATE_LABEL[state.kind]}`}
               onClick={(e) => open(rule, d, e.currentTarget)} onBlur={() => setFocus(null)}>
               <Cell state={state} />
@@ -92,12 +94,14 @@ function Matrix() {
       <div className="page-head">
         <div>
           <h1>Где какое правило действует</h1>
-          <div className="sub">Строка — правило из приказа, столбец — подразделение. Нажмите на ячейку, чтобы изменить.</div>
+          <div className="sub">Строка — правило из приказа, столбец — подразделение.{canEdit && " Нажмите на ячейку, чтобы изменить."}</div>
         </div>
-        <div className="row">
-          <button className="btn" onClick={actions.addDepartment}>+ Подразделение</button>
-          <button className="btn primary" onClick={() => openWizard()}>+ Правило</button>
-        </div>
+        {canEdit && (
+          <div className="row">
+            <button className="btn" onClick={actions.addDepartment}>+ Подразделение</button>
+            <button className="btn primary" onClick={() => openWizard()}>+ Правило</button>
+          </div>
+        )}
       </div>
 
       <div className="toolbar">
@@ -144,7 +148,8 @@ function Matrix() {
         </div>
       ) : (
         <div className="empty">
-          {search || orderFilter ? "Ничего не найдено." : "Правил пока нет. Начните с кнопки «+ Правило»."}
+          {search || orderFilter ? "Ничего не найдено."
+            : canEdit ? "Правил пока нет. Начните с кнопки «+ Правило»." : "Правил пока нет."}
         </div>
       )}
 
@@ -152,7 +157,8 @@ function Matrix() {
         <div className="card queue">
           <span className="badge warn">Ждут утверждения · {candidates.length}</span>
           {candidates.map(({ rule, department }) => (
-            <button key={rule.nodeId + department.nodeId} onClick={() => open(rule, department)}>
+            <button key={rule.nodeId + department.nodeId}
+              onClick={() => (canEdit ? open(rule, department) : openRule(rule.nodeId))}>
               {rule.description} — {department.name || department.departmentId}
             </button>
           ))}

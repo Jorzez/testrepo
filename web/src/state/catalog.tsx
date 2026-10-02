@@ -7,7 +7,7 @@ import type { CheckTarget, Department, Diagnostics, FlatClause, NodeKind, Order 
 import { errorText, useToast } from "../ui/Toasts";
 import { findOrderOf, findRuleRef } from "./tree";
 
-export type Section = "check" | "rules" | "orders" | "departments" | "targets" | "health";
+export type Section = "check" | "rules" | "orders" | "departments" | "targets" | "health" | "users";
 export type ApiState = "connecting" | "online" | "offline";
 
 interface Data {

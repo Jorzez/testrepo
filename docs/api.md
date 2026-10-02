@@ -2,15 +2,49 @@
 
 [← README](../README.md)
 
-Полный список с интерактивными схемами — Swagger на http://localhost:8080/docs.
+Полный список с интерактивными схемами — Swagger на http://localhost:8080/docs
+(выключен по умолчанию, включается `ENABLE_DOCS=1`).
+
+## Вход
+
+Все маршруты, кроме `/health`, `/ready` и входа, требуют сессию. Снаружи
+API доступен под `/api` интерфейса; порт 8080 слушает только сам сервер.
+
+```bash
+# Вход: cookie сессии сохраняется в файл. Пароль лучше не оставлять в истории оболочки.
+curl -s -c cookies.txt https://<интерфейс>/api/auth/login \
+  -H 'X-Requested-With: XMLHttpRequest' -H 'Content-Type: application/json' \
+  -d '{"login": "i.ivanov", "password": "…"}'
+
+curl -s -b cookies.txt https://<интерфейс>/api/check-goal \
+  -H 'X-Requested-With: XMLHttpRequest' -H 'Content-Type: application/json' \
+  -d '{"goal": "Снизить долю просроченных заявок до 5% к 31.12.2025", "department_id": "UCT"}'
+```
+
+```
+POST   /auth/login                {login, password} → {login, role, displayName}, ставит cookie
+POST   /auth/logout               закрывает сессию
+GET    /auth/me                   кто вошёл
+
+GET    /auth/users                реестр пользователей            (администратор)
+POST   /auth/users                {login, role, displayName}      (администратор)
+PATCH  /auth/users/{login}        {role, status, displayName}     (администратор)
+DELETE /auth/users/{login}                                        (администратор)
+```
+
+Изменяющие запросы (`POST`, `PUT`, `PATCH`, `DELETE`) обязаны нести заголовок
+`X-Requested-With: XMLHttpRequest` — без него ответ `403`. Чтение каталога
+и проверка целей доступны любой роли, правка — редактору, физическое
+удаление, `repair-identifiers` и `/auth/users` — администратору;
+см. [роли](security.md#роли).
 
 ## Проверка целей
 
 ### Пакетная проверка
 
 ```bash
-curl -s localhost:8080/check-goals \
-  -H 'Content-Type: application/json' \
+curl -s -b cookies.txt https://<интерфейс>/api/check-goals \
+  -H 'X-Requested-With: XMLHttpRequest' -H 'Content-Type: application/json' \
   -d '[{"goal": "Снизить долю просроченных заявок до 5% к 31.12.2025", "department_id": "UCT", "id": "kpi-1"},
        {"goal": "Улучшить работу с заявками", "department_id": "AGD", "id": "kpi-2"}]'
 ```
@@ -48,14 +82,12 @@ curl -s localhost:8080/check-goals \
 ### Прочее
 
 ```bash
-curl -s localhost:8080/health          # liveness
-curl -s localhost:8080/ready           # readiness + диагностика графа
-curl -s localhost:8080/check-targets   # словарь проверяемых атрибутов
-
-curl -s localhost:8080/check-goal \
-  -H 'Content-Type: application/json' \
-  -d '{"goal": "Снизить долю просроченных заявок до 5% к 31.12.2025", "department_id": "UCT"}'
+curl -s localhost:8080/health          # liveness, без входа
+curl -s localhost:8080/ready           # readiness + диагностика графа, без входа, только с сервера
 ```
+
+`GET /check-targets` — словарь проверяемых атрибутов, `POST /check-goal` —
+одна цель (пример — в разделе «Вход»).
 
 В одиночной проверке `department_id` необязателен: без него применяются
 все правила, а в `notes` появляется причина.
@@ -175,6 +207,8 @@ DELETE /catalog/nodes/{nodeId}?force=true       удалить без архив
 только внутри него («действует в УЦТ и АГД, но в АГД — исключение по п. 2.5»):
 вне списка правило и так не действует.
 
+`401` — нет сессии или она истекла, `403` — не хватает роли либо нет
+заголовка `X-Requested-With`, `429` — слишком много неудачных входов,
 `404` — узла нет, `409` — операция противоречит состоянию графа
 (двойник по написанию, удаление неархивированного узла, используемый атрибут
 или подразделение, занятый бизнес-ключ, действующее исключение без основания),

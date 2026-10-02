@@ -17,4 +17,9 @@ RUN npm run build
 
 FROM nginx:1.27-alpine
 
+# Адрес внешнего прокси, чьему X-Forwarded-For можно верить (см. шаблон).
+# Значение по умолчанию безвредно: сам контейнер себе запросов не шлёт.
+ENV TRUSTED_PROXY=127.0.0.1
+
+COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /app/dist /usr/share/nginx/html

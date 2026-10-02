@@ -66,6 +66,10 @@ FOR (e:ViolationExample) REQUIRE e.exampleId IS UNIQUE;
 CREATE CONSTRAINT department_id IF NOT EXISTS
 FOR (d:Department) REQUIRE d.departmentId IS UNIQUE;
 
+// Реестр пользователей интерфейса (api/users.py). В выгрузку не попадает.
+CREATE CONSTRAINT user_login IF NOT EXISTS
+FOR (u:User) REQUIRE u.login IS UNIQUE;
+
 CREATE FULLTEXT INDEX rule_description_ft IF NOT EXISTS
 FOR (r:Rule) ON EACH [r.description];
 

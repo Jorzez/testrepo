@@ -2,14 +2,16 @@
 
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import Body, FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import Body, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+import audit
+import auth
 import diagnostics
 import graph
 import schemas
@@ -31,26 +33,71 @@ async def lifespan(app: FastAPI):
         log.info("Соединение с Neo4j установлено")
     else:
         log.warning("Neo4j недоступен на старте, повторим при первом запросе")
+    auth.check_config()
     yield
     graph.close_driver()
 
 
-app = FastAPI(title="Goal Checker Agent", version="1.0.0", lifespan=lifespan)
+# Swagger описывает весь API, включая служебные маршруты, поэтому по умолчанию
+# выключен; на стенде включается через ENABLE_DOCS=1.
+DOCS = os.getenv("ENABLE_DOCS", "0").strip().lower() in ("1", "true", "yes", "on")
 
-# Фронтенд отдаётся с другого порта (3000), поэтому нужен CORS.
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        o.strip()
-        for o in os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
-        if o.strip()
-    ],
-    allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE"],
-    allow_headers=["*"],
+app = FastAPI(
+    title="Goal Checker Agent", version="1.0.0", lifespan=lifespan,
+    docs_url="/docs" if DOCS else None, redoc_url=None,
+    openapi_url="/openapi.json" if DOCS else None,
 )
 
+SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+AUDIT_BODY_LIMIT = 2000
+
+
+@app.middleware("http")
+async def guard(request: Request, call_next):
+    """Защита от CSRF, заголовки ответа и журнал аудита.
+
+    CORS не настроен намеренно: интерфейс ходит в API через свой же nginx
+    (/api), с того же origin. Изменяющий запрос обязан нести заголовок
+    X-Requested-With — чужая страница не может поставить его без CORS,
+    которого здесь нет; это второй слой после SameSite=Strict у cookie.
+    """
+    unsafe = request.method not in SAFE_METHODS
+    path = request.url.path
+    body = None
+    if unsafe and path.startswith("/catalog"):
+        # Что именно поменяли — в журнал; тела /auth туда не попадают никогда.
+        body = (await request.body())[:AUDIT_BODY_LIMIT].decode("utf-8", "replace") or None
+
+    started = time.monotonic()
+    status = 500
+    try:
+        if unsafe and request.headers.get("x-requested-with") != "XMLHttpRequest":
+            response = JSONResponse(status_code=403,
+                                    content={"detail": "Запрос отклонён: нет заголовка X-Requested-With"})
+        else:
+            response = await call_next(request)
+        status = response.status_code
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        return response
+    finally:
+        # Вход журналируется в auth.py подробнее: с причиной отказа.
+        if (unsafe or status == 403) and path != "/auth/login":
+            user = getattr(request.state, "user", None)
+            audit.event(
+                "request", login=user.login if user else None, role=user.role if user else None,
+                ip=audit.client_ip(request), method=request.method, path=path,
+                query=request.url.query or None, status=status,
+                ms=round((time.monotonic() - started) * 1000), body=body,
+            )
+
+
+app.include_router(auth.router)
 # CRUD над приказами, пунктами, правилами, атрибутами, примерами и подразделениями.
 app.include_router(catalog_router)
+
+# Проверка целей и словарь атрибутов доступны любому вошедшему пользователю.
+VIEWER = [Depends(auth.viewer)]
 
 
 class GoalRequest(BaseModel):
@@ -62,7 +109,7 @@ class GoalRequest(BaseModel):
     )
 
 
-@app.post("/check-goal")
+@app.post("/check-goal", dependencies=VIEWER)
 def check(req: GoalRequest):
     """Проверка цели на соответствие действующим приказам."""
     return check_goal(req.goal, department_id=req.department_id)
@@ -71,7 +118,7 @@ def check(req: GoalRequest):
 MAX_BATCH = int(os.getenv("MAX_GOALS_PER_REQUEST", "200"))
 
 
-@app.post("/check-goals")
+@app.post("/check-goals", dependencies=VIEWER)
 def check_many(items: list[schemas.GoalItem] = Body(..., description="Массив целей")):
     """Пакетная проверка целей.
 
@@ -89,7 +136,7 @@ def check_many(items: list[schemas.GoalItem] = Body(..., description="Масси
     return check_goals([item.model_dump() for item in items])
 
 
-@app.get("/check-targets")
+@app.get("/check-targets", dependencies=VIEWER)
 def check_targets():
     """Словарь проверяемых атрибутов из графа (полезно для отладки и UI)."""
     return {"targets": graph.get_check_targets()}
@@ -104,6 +151,10 @@ def health():
 @app.get("/ready")
 def ready():
     """Readiness: зависимости доступны, граф заполнен и внутренне непротиворечив.
+
+    Открыт без входа — для оркестратора и для проверки с самого сервера.
+    Наружу не попадает: порт API слушает только localhost, а nginx интерфейса
+    этот маршрут не проксирует.
 
     Дубликаты написаний, атрибуты без описания, правила без атрибутов и узлы
     без идентификаторов делают проверку целей молча неполной, поэтому это

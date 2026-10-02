@@ -113,7 +113,10 @@ def _fetch_node(node_id: str, label: str | None = None) -> dict[str, Any]:
         """,
         node_id=node_id,
     )
-    if not row:
+    # Операции над «произвольным узлом» — только над узлами каталога: в той же
+    # базе лежат пользователи (:User), и правка их свойств по elementId
+    # означала бы выдачу себе любой роли в обход /auth/users.
+    if not row or not any(l in BUSINESS_KEYS for l in row["labels"]):
         raise NotFound("Узел не найден — возможно, его удалили. Обновите страницу.")
     if label and label not in row["labels"]:
         raise Conflict(f"Ожидался узел :{label}, а это :{'/'.join(row['labels'])}")

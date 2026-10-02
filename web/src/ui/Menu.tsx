@@ -2,6 +2,8 @@ import {
   createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode,
 } from "react";
 
+import { useAuth } from "../state/auth";
+
 /* Все операции над приказом, пунктом, правилом и атрибутом собраны в одно
    выпадающее меню: иначе строка действий шире самого содержимого.
    Открыто не больше одного меню; прокрутка, ресайз, Escape и клик мимо
@@ -90,6 +92,8 @@ function Popup({ menu, close }: { menu: OpenMenu; close: () => void }) {
 
 export function MenuButton({ items }: { items: () => MenuItem[] }) {
   const open = useContext(MenuContext);
+  // В меню «⋯» только изменяющие действия — читателю оно не показывается.
+  if (!useAuth().canEdit) return null;
   return (
     <button className="btn sm menu-btn" title="Действия" aria-label="Действия"
       onMouseDown={(e) => e.stopPropagation()}

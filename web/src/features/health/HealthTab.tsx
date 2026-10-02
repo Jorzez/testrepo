@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { api } from "../../api/client";
 import type { Diagnostics, Issue } from "../../api/types";
+import { useAuth } from "../../state/auth";
 import { useCatalog } from "../../state/catalog";
 import { Spinner } from "../../ui/common";
 import { useDialogs } from "../../ui/Dialogs";
@@ -22,6 +23,7 @@ type LoadState = { kind: "loading" } | { kind: "error"; message: string } | { ki
 export function HealthTab({ hidden }: { hidden: boolean }) {
   const { goToNode, reload, refreshHealth } = useCatalog();
   const { confirm } = useDialogs();
+  const { isAdmin } = useAuth();
   const toast = useToast();
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [repairing, setRepairing] = useState(false);
@@ -82,7 +84,7 @@ export function HealthTab({ hidden }: { hidden: boolean }) {
             <div className="dim" style={{ marginTop: 8 }}>{state.message}</div>
           </div>
         )}
-        {state.kind === "ready" && <Report report={state.report} repairing={repairing} onRepair={repair}
+        {state.kind === "ready" && <Report report={state.report} repairing={repairing} onRepair={isAdmin ? repair : null}
           onGoTo={(nodeId, kind) => void goToNode(nodeId, kind)} />}
       </div>
     </section>
@@ -92,7 +94,8 @@ export function HealthTab({ hidden }: { hidden: boolean }) {
 function Report({ report, repairing, onRepair, onGoTo }: {
   report: Diagnostics;
   repairing: boolean;
-  onRepair: () => void;
+  /** null — чинить может только администратор. */
+  onRepair: (() => void) | null;
   onGoTo: (nodeId: string, kind: Issue["items"][number]["kind"]) => void;
 }) {
   return (
@@ -125,9 +128,11 @@ function Report({ report, repairing, onRepair, onGoTo }: {
             <div className="detail">{issue.detail}</div>
             {issue.fix?.action === "repair_identifiers" && (
               <div style={{ marginTop: 11 }}>
-                <button className="btn sm primary" disabled={repairing} onClick={onRepair}>
-                  {repairing ? <><Spinner /> Чиним…</> : issue.fix.label}
-                </button>
+                {onRepair ? (
+                  <button className="btn sm primary" disabled={repairing} onClick={onRepair}>
+                    {repairing ? <><Spinner /> Чиним…</> : issue.fix.label}
+                  </button>
+                ) : <span className="dim">Исправить может администратор.</span>}
               </div>
             )}
             {issue.items.length > 0 && (

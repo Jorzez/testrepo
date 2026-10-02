@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { api } from "../../api/client";
+import { useAuth } from "../../state/auth";
 import { useCatalog } from "../../state/catalog";
 import { scopeOf, withApplies, withOff, type Scope } from "../../state/scope";
 import { findRuleRef } from "../../state/tree";
@@ -16,6 +17,7 @@ import { useCellEditor } from "./CellEditor";
 export function RulePanel() {
   const { orders, targets, departments, panelRule, closeRule, mutate } = useCatalog();
   const actions = useActions();
+  const { canEdit, isAdmin } = useAuth();
   const editCell = useCellEditor();
   const toast = useToast();
   const ref = panelRule ? findRuleRef(orders, panelRule) : undefined;
@@ -66,7 +68,7 @@ export function RulePanel() {
           : <span className="badge requirement" title="Это должно быть в цели">Требование</span>}
         <ArchivedBadge status={rule.status} /><IdBadge value={rule.ruleId} name="ruleId" />
         <div className="spacer" />
-        <button className="btn sm" onClick={actions.editRule(rule)}>Изменить</button>
+        {canEdit && <button className="btn sm" onClick={actions.editRule(rule)}>Изменить</button>}
         <MenuButton items={() => actions.ruleMenu(rule)} />
       </div>
       {rule.checkInstruction && (
@@ -75,7 +77,7 @@ export function RulePanel() {
 
       <div className="sec">
         <h3><i>1</i>Что проверяем
-          <button className="btn sm ghost" onClick={actions.ruleTargets(rule)}>Изменить</button></h3>
+          {canEdit && <button className="btn sm ghost" onClick={actions.ruleTargets(rule)}>Изменить</button>}</h3>
         {rule.targets.length ? rule.targets.map((name) => {
           const target = targets.find((t) => t.name === name);
           return (
@@ -86,7 +88,7 @@ export function RulePanel() {
                 : target && (
                   <div className="alert row between" style={{ marginTop: 6 }}>
                     <span>Нет описания — модель не распознает атрибут, правило сработает на любой цели</span>
-                    <button className="btn sm" onClick={actions.editTarget(target)}>Описать</button>
+                    {canEdit && <button className="btn sm" onClick={actions.editTarget(target)}>Описать</button>}
                   </div>
                 )}
             </div>
@@ -97,11 +99,11 @@ export function RulePanel() {
       <div className="sec">
         <h3><i>2</i>Где действует</h3>
         <div className="seg" role="group" aria-label="Где действует">
-          <button aria-pressed={!limited} onClick={() => {
+          <button aria-pressed={!limited} disabled={!canEdit} onClick={() => {
             setPicking(false);
             if (scope.only.length) void save({ only: [], exceptions: scope.exceptions });
           }}>Все подразделения</button>
-          <button aria-pressed={limited} onClick={() => setPicking(true)}>Только выбранные</button>
+          <button aria-pressed={limited} disabled={!canEdit} onClick={() => setPicking(true)}>Только выбранные</button>
         </div>
         {limited && (
           <div className="chips" style={{ marginTop: 10 }}>
@@ -109,13 +111,14 @@ export function RulePanel() {
               const on = scope.only.includes(d.departmentId!);
               return (
                 <label key={d.nodeId} className={`box ${on ? "on" : ""}`}>
-                  <input type="checkbox" checked={on} onChange={(e) => toggle(d.departmentId!, e.target.checked)} />
+                  <input type="checkbox" checked={on} disabled={!canEdit}
+                    onChange={(e) => toggle(d.departmentId!, e.target.checked)} />
                   {d.name || d.departmentId}
                 </label>
               );
             })}
             {!known.length && <span className="dim">Подразделений нет — заведите их в разделе «Подразделения».</span>}
-            {!scope.only.length && known.length > 0 && <span className="hint" style={{ margin: 0 }}>Отметьте подразделения</span>}
+            {canEdit && !scope.only.length && known.length > 0 && <span className="hint" style={{ margin: 0 }}>Отметьте подразделения</span>}
           </div>
         )}
 
@@ -129,17 +132,19 @@ export function RulePanel() {
                   : <span className="badge warn">кандидат — не утверждено</span>}
                 {e.note && <div className="small muted" style={{ marginTop: 2 }}>{e.note}</div>}
               </div>
-              <div className="actions">
-                <button className="btn sm ghost" onClick={() => editCell({
-                  rule, department: known.find((d) => d.departmentId === e.departmentId),
-                })}>{e.status === "active" ? "Изменить" : "Утвердить"}</button>
-                <button className="btn sm ghost" onClick={() => void save(withApplies(scope, e.departmentId))}>Убрать</button>
-              </div>
+              {canEdit && (
+                <div className="actions">
+                  <button className="btn sm ghost" onClick={() => editCell({
+                    rule, department: known.find((d) => d.departmentId === e.departmentId),
+                  })}>{e.status === "active" ? "Изменить" : "Утвердить"}</button>
+                  <button className="btn sm ghost" onClick={() => void save(withApplies(scope, e.departmentId))}>Убрать</button>
+                </div>
+              )}
             </div>
           ))}
           <div className="row between" style={{ marginTop: 6 }}>
             <span className="small muted">{scope.exceptions.length ? "" : "Исключений нет"}</span>
-            <button className="btn sm ghost" disabled={!known.length} onClick={() => editCell({ rule })}>+ Исключение</button>
+            {canEdit && <button className="btn sm ghost" disabled={!known.length} onClick={() => editCell({ rule })}>+ Исключение</button>}
           </div>
         </div>
       </div>
@@ -157,13 +162,15 @@ export function RulePanel() {
               ex.status === "archived"
                 ? { label: "Вернуть", run: actions.restore(ex.nodeId) }
                 : { label: "В архив", run: actions.archive(ex.nodeId) },
-              { label: "Удалить", run: actions.deleteExample(ex), danger: true },
+              ...(isAdmin ? [{ label: "Удалить", run: actions.deleteExample(ex), danger: true }] : []),
             ]} />
           </div>
         )) : <div className="dim">Примеров нет — автор цели не увидит образца формулировки.</div>}
-        <button className="btn sm ghost" style={{ marginLeft: -8, marginTop: 4 }} onClick={actions.addExample(rule)}>
-          + Добавить пример
-        </button>
+        {canEdit && (
+          <button className="btn sm ghost" style={{ marginLeft: -8, marginTop: 4 }} onClick={actions.addExample(rule)}>
+            + Добавить пример
+          </button>
+        )}
       </div>
 
       <div className="sec">

@@ -7,6 +7,10 @@
 dist/
 models/
 
+# Корневой сертификат домена для LDAPS: у каждого сервера свой.
+certs/*
+!certs/.gitkeep
+
 # Python
 __pycache__/
 *.pyc

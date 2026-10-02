@@ -3,6 +3,27 @@
    и сгенерировать эти типы из него нельзя. Меняете ответ API — меняйте здесь. */
 
 export type Status = "active" | "archived";
+
+/** Роли по возрастанию прав: читатель, редактор, администратор. */
+export type Role = "viewer" | "editor" | "admin";
+export type UserStatus = "active" | "blocked";
+
+/** Тот, кто вошёл. */
+export interface Account {
+  login: string;
+  role: Role;
+  displayName: string | null;
+}
+
+/** Запись реестра пользователей (api/users.py). */
+export interface User extends Account {
+  status: UserStatus;
+  /** Администратор из AUTH_ADMIN_LOGINS: в интерфейсе не меняется. */
+  builtin: boolean;
+  createdAt: string | null;
+  createdBy: string | null;
+  lastLoginAt: string | null;
+}
 export type RuleType = "PROHIBITION" | "REQUIREMENT";
 
 /** Любые свойства узла, кроме служебных, приходят как есть. */

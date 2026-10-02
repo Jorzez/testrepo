@@ -3,6 +3,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
+import auth
 import catalog
 import diagnostics
 import graph
@@ -25,11 +26,17 @@ BROKEN = {
 
 @pytest.fixture
 def client(monkeypatch):
+    """Клиент вошедшего администратора: здесь проверяются сами маршруты.
+
+    Вход, роли и отказы без сессии — в test_auth.py.
+    """
     monkeypatch.setattr(graph, "verify_connectivity", lambda: True)
     monkeypatch.setattr(graph, "close_driver", lambda: None)
     monkeypatch.setattr(diagnostics, "collect", lambda: HEALTHY)
-    with TestClient(main.app) as c:
+    main.app.dependency_overrides[auth.current_user] = lambda: auth.Principal("tester", "admin")
+    with TestClient(main.app, headers={"X-Requested-With": "XMLHttpRequest"}) as c:
         yield c
+    main.app.dependency_overrides.clear()
 
 
 def test_health(client):

@@ -1,14 +1,13 @@
 import type {
-  CheckResult, CheckTarget, Department, Descendants, Diagnostics, ExceptionStatus, FlatClause,
-  NodeProps, Order, RepairReport, RuleType, Status,
+  Account, CheckResult, CheckTarget, Department, Descendants, Diagnostics, ExceptionStatus, FlatClause,
+  NodeProps, Order, RepairReport, Role, RuleType, Status, User, UserStatus,
 } from "./types";
 
-/* Адрес API. По умолчанию тот же хост, порт 8080 — работает и локально,
-   и через SSH-туннель. Переопределяется через ?api=http://host:port.
-   В режиме разработки — относительный /api (прокси или фейк, см. vite.config.ts). */
-export const API_BASE =
-  new URLSearchParams(location.search).get("api")
-  || (import.meta.env.DEV ? "/api" : `${location.protocol}//${location.hostname}:8080`);
+/* API всегда на том же origin, под /api: в сборке его проксирует nginx
+   интерфейса, в разработке — Vite (прокси или фейк, см. vite.config.ts).
+   Адрес намеренно нельзя переопределить из строки запроса: иначе ссылка
+   вида ?api=https://чужой-сервер отправляла бы туда пароль из формы входа. */
+export const API_BASE = "/api";
 
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) {
@@ -18,17 +17,28 @@ export class ApiError extends Error {
 
 type Method = "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
 
+/* Сессия могла истечь посреди работы: любой ответ 401 возвращает на экран входа. */
+let onSessionLost: (() => void) | null = null;
+export const setSessionLostHandler = (handler: (() => void) | null) => { onSessionLost = handler; };
+
 async function request<T>(method: Method, path: string, body?: unknown): Promise<T> {
   let response: Response;
   try {
     response = await fetch(API_BASE + path, {
       method,
-      headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+      // Cookie сессии — только своему origin. X-Requested-With API требует
+      // у изменяющих запросов: чужая страница такой заголовок поставить не может.
+      credentials: "same-origin",
+      headers: {
+        "X-Requested-With": "XMLHttpRequest",
+        ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+      },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch {
     throw new ApiError("API недоступен", 0);
   }
+  if (response.status === 401 && !path.startsWith("/auth/")) onSessionLost?.();
 
   let payload: unknown = null;
   try { payload = await response.json(); } catch { /* пустой ответ */ }
@@ -60,6 +70,16 @@ export interface ScopeException {
 }
 
 export const api = {
+  me: () => request<Account>("GET", "/auth/me"),
+  login: (login: string, password: string) => request<Account>("POST", "/auth/login", { login, password }),
+  logout: () => request<null>("POST", "/auth/logout"),
+  users: () => request<{ users: User[] }>("GET", "/auth/users"),
+  createUser: (body: { login: string; role: Role; displayName: string | null }) =>
+    request<User>("POST", "/auth/users", body),
+  patchUser: (login: string, body: { role?: Role; status?: UserStatus; displayName?: string | null }) =>
+    request<User>("PATCH", `/auth/users/${enc(login)}`, body),
+  deleteUser: (login: string) => request("DELETE", `/auth/users/${enc(login)}`),
+
   tree: (includeArchived: boolean) =>
     request<{ orders: Order[] }>("GET", `/catalog/tree?include_archived=${includeArchived}`),
   checkTargets: (includeArchived: boolean) =>

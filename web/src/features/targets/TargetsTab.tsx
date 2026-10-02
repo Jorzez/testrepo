@@ -1,3 +1,4 @@
+import { useAuth } from "../../state/auth";
 import { useCatalog } from "../../state/catalog";
 import { archivedClass, ArchivedBadge, Chip } from "../../ui/common";
 import { MenuButton } from "../../ui/Menu";
@@ -9,6 +10,7 @@ import { useActions } from "../actions";
 export function TargetsTab({ hidden }: { hidden: boolean }) {
   const { targets, showArchivedTargets, reload } = useCatalog();
   const actions = useActions();
+  const { canEdit } = useAuth();
 
   return (
     <section id="tab-targets" className={hidden ? "hidden" : ""}>
@@ -17,7 +19,7 @@ export function TargetsTab({ hidden }: { hidden: boolean }) {
           <h1>Атрибуты</h1>
           <div className="sub">То, что модель ищет в формулировке цели. Атрибут без описания она не распознаёт — правило на нём срабатывает всегда.</div>
         </div>
-        <button className="btn primary" onClick={actions.addTarget}>+ Атрибут</button>
+        {canEdit && <button className="btn primary" onClick={actions.addTarget}>+ Атрибут</button>}
       </div>
       <div className="toolbar">
         <label className="check">

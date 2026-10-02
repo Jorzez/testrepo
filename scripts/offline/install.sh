@@ -36,7 +36,7 @@ cd "$INSTALL_DIR"
 
 if [[ ! -f .env ]]; then
   cp "$BUNDLE_DIR/.env.example" .env
-  echo "Создан $INSTALL_DIR/.env из шаблона. Заполните NEO4J_PASSWORD и проверьте пути."
+  echo "Создан $INSTALL_DIR/.env из шаблона. Заполните NEO4J_PASSWORD, настройки входа (LDAP_*, AUTH_ADMIN_LOGINS) и проверьте пути."
 fi
 # shellcheck disable=SC1091
 set -a; source .env; set +a
@@ -76,6 +76,17 @@ fi
 if [[ -z "${NEO4J_PASSWORD:-}" || "${NEO4J_PASSWORD}" == "change_me" ]]; then
   die "в $INSTALL_DIR/.env не задан NEO4J_PASSWORD"
 fi
+# Стек, в который некому войти, поднимать бессмысленно.
+if [[ "${AUTH_BACKEND:-ldap}" == "ldap" ]]; then
+  if [[ -z "${LDAP_URL:-}" || "${LDAP_URL}" == *example.local* || "${LDAP_USER_TEMPLATE:-}" != *"{login}"* \
+        || "${LDAP_USER_TEMPLATE}" == *example.local* ]]; then
+    die "в $INSTALL_DIR/.env не заданы LDAP_URL и LDAP_USER_TEMPLATE (см. docs/security.md)"
+  fi
+fi
+if [[ -z "${AUTH_ADMIN_LOGINS:-}" || "${AUTH_ADMIN_LOGINS}" == "change_me" ]]; then
+  die "в $INSTALL_DIR/.env не задан AUTH_ADMIN_LOGINS — логин первого администратора"
+fi
+mkdir -p certs
 
 # --- Запуск -------------------------------------------------------------------
 log "docker compose up -d (без --build и без pull)"
@@ -86,5 +97,7 @@ cat <<EOF
 Стек запущен из $INSTALL_DIR.
 Загрузка весов модели занимает несколько минут; готовность:
   curl -s localhost:8080/ready
-Редактор каталога: http://<сервер>:3000
+Редактор каталога: http://<сервер>:3000 — вход доменной учётной записью;
+первый администратор — из AUTH_ADMIN_LOGINS. Перед портом 3000 нужен
+прокси с TLS: cookie сессии по HTTP не передаётся (docs/security.md).
 EOF

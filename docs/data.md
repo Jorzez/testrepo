@@ -25,9 +25,10 @@ docker compose exec api python export_graph.py --stdout
 
 ### Полный сброс и загрузка
 
-`neo4j/init/reset_and_load.cypher` удаляет все узлы и заводит каталог заново —
+`neo4j/init/reset_and_load.cypher` удаляет все узлы каталога и заводит его заново —
 уже со всеми полями, которых требуют текущие проверки: бизнес-ключи, статусы,
-описания атрибутов, примеры нужного вида.
+описания атрибутов, примеры нужного вида. Пользователи интерфейса (`:User`)
+и их роли при сбросе сохраняются.
 
 ```bash
 docker compose exec neo4j neo4j-admin database dump neo4j --to-stdout > backup.dump

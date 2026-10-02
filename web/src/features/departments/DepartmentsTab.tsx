@@ -1,3 +1,4 @@
+import { useAuth } from "../../state/auth";
 import { useCatalog } from "../../state/catalog";
 import { archivedClass, ArchivedBadge, Chip, IdBadge } from "../../ui/common";
 import { MenuButton } from "../../ui/Menu";
@@ -10,6 +11,7 @@ import { useActions } from "../actions";
 export function DepartmentsTab({ hidden }: { hidden: boolean }) {
   const { departments, showArchivedDepartments, reload } = useCatalog();
   const actions = useActions();
+  const { canEdit } = useAuth();
 
   return (
     <section id="tab-departments" className={hidden ? "hidden" : ""}>
@@ -18,7 +20,7 @@ export function DepartmentsTab({ hidden }: { hidden: boolean }) {
           <h1>Подразделения</h1>
           <div className="sub">Идентификатор передаёт кадровая система в запросе проверки. Где какое правило действует — в разделе «Правила».</div>
         </div>
-        <button className="btn primary" onClick={actions.addDepartment}>+ Подразделение</button>
+        {canEdit && <button className="btn primary" onClick={actions.addDepartment}>+ Подразделение</button>}
       </div>
       <div className="toolbar">
         <label className="check">

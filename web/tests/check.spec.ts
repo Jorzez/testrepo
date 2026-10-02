@@ -1,4 +1,4 @@
-import { check, expect, go, test, toast } from "./fixtures";
+import { check, expect, go, isApi, test, toast } from "./fixtures";
 
 const GOAL = "Снизить долю просроченных заявок до 5% к 31.12.2025";
 
@@ -71,8 +71,18 @@ test("пустая цель не отправляется", async ({ app }) => {
 });
 
 test("недоступный API виден в боковой панели", async ({ page }) => {
-  await page.route("**/mockapi/**", (route) => route.abort());
-  await page.goto("/?api=/mockapi");
+  // Сессия есть, а каталог не отвечает: интерфейс открыт, но данных нет.
+  await page.route(isApi, (route) => new URL(route.request().url()).pathname === "/api/auth/me"
+    ? route.fulfill({ json: { login: "admin", role: "admin", displayName: null } })
+    : route.abort());
+  await page.goto("/");
   await expect(page.locator(".side").getByText("API недоступен")).toBeVisible();
   await expect(toast(page, "Не удалось получить данные")).toBeVisible();
+});
+
+test("без связи с сервером формы входа нет — только повтор", async ({ page }) => {
+  await page.route(isApi, (route) => route.abort());
+  await page.goto("/");
+  await expect(page.getByText("Не удалось связаться с сервером")).toBeVisible();
+  await expect(page.getByLabel("Пароль")).toHaveCount(0);
 });

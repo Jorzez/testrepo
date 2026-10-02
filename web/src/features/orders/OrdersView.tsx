@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import type { Clause, Order, Rule } from "../../api/types";
+import { useAuth } from "../../state/auth";
 import { useCatalog } from "../../state/catalog";
 import { scopeSummary } from "../../state/scope";
 import { normalizeQuery, orderMatches } from "../../state/tree";
@@ -14,6 +15,7 @@ import { useActions } from "../actions";
 export function OrdersView({ hidden }: { hidden: boolean }) {
   const { orders, showArchived, reload, selectedOrder, selectOrder } = useCatalog();
   const actions = useActions();
+  const { canEdit } = useAuth();
   const [search, setSearch] = useState("");
   const query = normalizeQuery(search);
   const visible = orders.filter((o) => orderMatches(o, query));
@@ -47,11 +49,12 @@ export function OrdersView({ hidden }: { hidden: boolean }) {
             ))}
           </div>
           {!visible.length && <div className="dim" style={{ padding: "12px 14px" }}>{search ? "Ничего не найдено." : "Приказов пока нет."}</div>}
-          <button className="btn ghost" style={{ marginTop: 10 }} onClick={actions.addOrder}>+ Добавить приказ</button>
+          {canEdit && <button className="btn ghost" style={{ marginTop: 10 }} onClick={actions.addOrder}>+ Добавить приказ</button>}
         </div>
 
         {order ? <OrderDocument order={order} /> : (
-          <div className="empty">{search ? "Ничего не найдено." : "Приказов пока нет. Начните с кнопки «+ Добавить приказ»."}</div>
+          <div className="empty">{search ? "Ничего не найдено."
+            : canEdit ? "Приказов пока нет. Начните с кнопки «+ Добавить приказ»." : "Приказов пока нет."}</div>
         )}
       </div>
     </section>
@@ -60,6 +63,7 @@ export function OrdersView({ hidden }: { hidden: boolean }) {
 
 function OrderDocument({ order }: { order: Order }) {
   const actions = useActions();
+  const { canEdit } = useAuth();
   return (
     <div data-node={order.nodeId} className={archivedClass(order.status)} style={{ borderRadius: 16 }}>
       <div className="row top between">
@@ -71,22 +75,25 @@ function OrderDocument({ order }: { order: Order }) {
           </div>
         </div>
         <div className="row">
-          <button className="btn sm" onClick={actions.editOrder(order)}>Изменить</button>
+          {canEdit && <button className="btn sm" onClick={actions.editOrder(order)}>Изменить</button>}
           <MenuButton items={() => actions.orderMenu(order)} />
         </div>
       </div>
 
       {order.clauses.map((c) => <ClauseBlock key={c.nodeId} clause={c} />)}
       {!order.clauses.length && <div className="dim" style={{ marginTop: 18 }}>Пунктов нет.</div>}
-      <button className="btn ghost" style={{ margin: "18px 0 0 54px" }} onClick={actions.addClause(order.nodeId)}>
-        + Добавить пункт
-      </button>
+      {canEdit && (
+        <button className="btn ghost" style={{ margin: "18px 0 0 54px" }} onClick={actions.addClause(order.nodeId)}>
+          + Добавить пункт
+        </button>
+      )}
     </div>
   );
 }
 
 function ClauseBlock({ clause }: { clause: Clause }) {
   const actions = useActions();
+  const { canEdit } = useAuth();
   return (
     <div className={`clause ${archivedClass(clause.status)}`} data-node={clause.nodeId}>
       <div className="num">{clause.code || "?"}</div>
@@ -104,7 +111,7 @@ function ClauseBlock({ clause }: { clause: Clause }) {
       <div className="under">
         {clause.rules.map((r) => <RuleCard key={r.nodeId} rule={r} />)}
         {!clause.rules.length && <div className="dim">Правил нет — пункт ничего не проверяет.</div>}
-        <button className="btn sm ghost" style={{ alignSelf: "flex-start" }} onClick={actions.addRule(clause)}>+ Правило</button>
+        {canEdit && <button className="btn sm ghost" style={{ alignSelf: "flex-start" }} onClick={actions.addRule(clause)}>+ Правило</button>}
       </div>
     </div>
   );

@@ -1,5 +1,6 @@
 import { api } from "../api/client";
 import type { CheckTarget, Clause, Department, Example, Order, Rule, Status } from "../api/types";
+import { useAuth } from "../state/auth";
 import { useCatalog } from "../state/catalog";
 import { findOrderOf } from "../state/tree";
 import { Chip } from "../ui/common";
@@ -22,6 +23,7 @@ export function useActions() {
   const catalog = useCatalog();
   const { orders, targets, clauses, mutate, openWizard, selectOrder } = catalog;
   const { openForm, confirm } = useDialogs();
+  const { isAdmin } = useAuth();
   const toast = useToast();
   const editProperties = usePropertiesEditor();
 
@@ -80,7 +82,8 @@ export function useActions() {
     node.status === "archived"
       ? { label: "Вернуть", run: restore(node.nodeId) }
       : { label: "В архив", run: archive(node.nodeId, target) },
-    { label: "Удалить", run: remove(node.nodeId), danger: true },
+    // Удаление необратимо, поэтому оно только у администратора; архив — у редактора.
+    ...(isAdmin ? [{ label: "Удалить", run: remove(node.nodeId), danger: true }] : []),
   ];
 
   const props = (nodeId: string) => () => editProperties(nodeId);

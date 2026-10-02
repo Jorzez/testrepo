@@ -1,9 +1,10 @@
 // ============================================================
 //  ПОЛНЫЙ СБРОС И ЗАГРУЗКА КАТАЛОГА
 //
-//  ВНИМАНИЕ: скрипт УДАЛЯЕТ ВСЕ УЗЛЫ базы, а затем заводит
+//  ВНИМАНИЕ: скрипт УДАЛЯЕТ ВСЕ УЗЛЫ КАТАЛОГА, а затем заводит
 //  каталог заново — уже со всеми полями, которых требуют
-//  текущие проверки и интерфейс.
+//  текущие проверки и интерфейс. Пользователи интерфейса (:User)
+//  и их роли сохраняются.
 //
 //  Перед запуском сделайте дамп:
 //    docker compose exec neo4j \
@@ -47,17 +48,21 @@ FOR (e:ViolationExample) REQUIRE e.exampleId IS UNIQUE;
 CREATE CONSTRAINT department_id IF NOT EXISTS
 FOR (d:Department) REQUIRE d.departmentId IS UNIQUE;
 
+// Реестр пользователей интерфейса (api/users.py). В выгрузку не попадает.
+CREATE CONSTRAINT user_login IF NOT EXISTS
+FOR (u:User) REQUIRE u.login IS UNIQUE;
+
 CREATE FULLTEXT INDEX rule_description_ft IF NOT EXISTS
 FOR (r:Rule) ON EACH [r.description];
 
 // ---------- ОЧИСТКА ----------
-// Удаляются ВСЕ узлы базы. Если в базе есть что-то помимо каталога,
-// замените строку ниже на выборочную:
-//   MATCH (n) WHERE n:Order OR n:Clause OR n:Rule
-//              OR n:CheckTarget OR n:ViolationExample OR n:Department DETACH DELETE n;
-// Для очень большой базы удаляйте партиями:
-//   CALL { MATCH (n) DETACH DELETE n } IN TRANSACTIONS OF 10000 ROWS;
-MATCH (n) DETACH DELETE n;
+// Удаляются все узлы каталога. Узлы :User не трогаются: иначе сброс
+// каталога лишал бы доступа всех, кому роль назначена в интерфейсе.
+// Для очень большой базы удаляйте партиями: оберните оператор в
+//   CALL { ... } IN TRANSACTIONS OF 10000 ROWS;
+MATCH (n) WHERE n:Order OR n:Clause OR n:Rule
+             OR n:CheckTarget OR n:ViolationExample OR n:Department
+DETACH DELETE n;
 
 // ---------- Атрибуты (:CheckTarget) ----------
 // description — это то, что уходит в промпт модели. Формулируйте как
