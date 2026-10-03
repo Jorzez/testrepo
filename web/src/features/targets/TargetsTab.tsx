@@ -7,13 +7,13 @@ import { useActions } from "../actions";
 /* Словарь :CheckTarget с описаниями: видно, какие правила ссылаются на
    атрибут и у каких нет описания. */
 
-export function TargetsTab({ hidden }: { hidden: boolean }) {
+export function TargetsTab() {
   const { targets, showArchivedTargets, reload } = useCatalog();
   const actions = useActions();
   const { canEdit } = useAuth();
 
   return (
-    <section id="tab-targets" className={hidden ? "hidden" : ""}>
+    <section id="tab-targets">
       <div className="page-head">
         <div>
           <h1>Атрибуты</h1>
@@ -38,7 +38,14 @@ export function TargetsTab({ hidden }: { hidden: boolean }) {
           <tbody>
             {targets.map((t) => (
               <tr key={t.nodeId} className={archivedClass(t.status)} data-node={t.nodeId}>
-                <td><span className="mono">{t.name}</span> <ArchivedBadge status={t.status} /></td>
+                <td>
+                  <span className="mono">{t.name}</span> <ArchivedBadge status={t.status} />
+                  {t.source === "job_descriptions" && (
+                    <span className="badge" title="Определяется сравнением цели с должностными инструкциями подразделения">
+                      по должностным инструкциям
+                    </span>
+                  )}
+                </td>
                 <td>{t.description || <span className="badge warn">нет описания — модель не распознает атрибут</span>}</td>
                 <td>{t.rules.length
                   ? t.rules.map((r) => <Chip key={r}>{r}</Chip>)

@@ -90,8 +90,40 @@ ORDER BY id
 ALL_CHECK_TARGETS = f"""
 MATCH (t:CheckTarget)
 WHERE {ACTIVE.format('t')}
-RETURN t.name AS name, coalesce(t.description, '') AS description
+RETURN t.name AS name, coalesce(t.description, '') AS description, t.source AS source
 ORDER BY name
+"""
+
+# Должностные инструкции подразделения:
+#   (d:Department)-[:HAS_JOB_DESCRIPTION]->(j:JobDescription {{jobDescriptionId, title, text}})
+# Атрибут с source = 'job_descriptions' определяется не по одному тексту цели,
+# а сравнением цели с этими инструкциями (см. agent.check_job_targets).
+JOB_SOURCE = "job_descriptions"
+
+DEPARTMENT_JOB_DESCRIPTIONS = f"""
+MATCH (:Department {{departmentId: $department_id}})-[:HAS_JOB_DESCRIPTION]->(j:JobDescription)
+WHERE {ACTIVE.format('j')}
+  AND (trim(coalesce(j.text, '')) <> '' OR size(coalesce(j.duties, [])) > 0)
+RETURN j.jobDescriptionId AS id, coalesce(j.title, '') AS title,
+       coalesce(j.text, '') AS text, coalesce(j.duties, []) AS duties
+ORDER BY title, id
+"""
+
+# Какие правила на «инструкционных» атрибутах касаются подразделения. Статус
+# исключения возвращается рядом: если все такие правила сняты утверждённым
+# исключением, невозможность сравнить цель с инструкциями вердикту не мешает.
+JOB_RULES_FOR_DEPARTMENT = f"""
+MATCH (o:Order)-[:CONTAINS]->(c:Clause)
+      -[:DEFINES]->(r:Rule)
+      -[:APPLIES_TO]->(t:CheckTarget)
+WHERE t.name IN $attributes
+  AND {ACTIVE.format('o')}
+  AND {ACTIVE.format('c')}
+  AND {ACTIVE.format('r')}
+  AND {ACTIVE.format('t')}
+  AND {FOR_DEPARTMENT}
+{EXCEPTION_MATCH}
+RETURN t.name AS attribute, r.ruleId AS rule_id, x.status AS exception_status
 """
 
 # Запрет нарушен, если атрибут ПРИСУТСТВУЕТ в цели.
@@ -154,6 +186,27 @@ RETURN o.number             AS order_number,
 ORDER BY order_number, clause_code, rule_id, attribute
 """
 
+# Примеры правил для промпта извлечения (agent.attribute_examples).
+RULE_EXAMPLES = f"""
+MATCH (o:Order)-[:CONTAINS]->(c:Clause)
+      -[:DEFINES]->(r:Rule)
+      -[:HAS_EXAMPLE]->(e:ViolationExample)
+WHERE {ACTIVE.format('o')}
+  AND {ACTIVE.format('c')}
+  AND {ACTIVE.format('r')}
+  AND {ACTIVE.format('e')}
+  AND trim(coalesce(e.text, '')) <> ''
+MATCH (r)-[:APPLIES_TO]->(t:CheckTarget)
+WHERE {ACTIVE.format('t')}
+RETURN elementId(e)                   AS node_id,
+       coalesce(e.exampleId, '')      AS example_id,
+       e.text                         AS text,
+       coalesce(e.isViolation, false) AS is_violation,
+       r.type                         AS rule_type,
+       collect(DISTINCT t.name)       AS targets
+ORDER BY example_id, text
+"""
+
 GRAPH_OVERVIEW = """
 MATCH (n)-[r]->(m)
 RETURN n, r, m
@@ -206,9 +259,36 @@ ORDER BY rule_id
 
 
 def get_check_targets() -> list[dict[str, str]]:
-    """Словарь проверяемых атрибутов: [{'name': ..., 'description': ...}, ...]."""
+    """Словарь проверяемых атрибутов: [{'name': ..., 'description': ..., 'source': ...}, ...]."""
     with get_driver().session() as session:
         return [dict(record) for record in session.run(ALL_CHECK_TARGETS)]
+
+
+def get_rule_examples() -> list[dict[str, Any]]:
+    """Действующие примеры правил с атрибутами их правил, в устойчивом порядке."""
+    with get_driver().session() as session:
+        return [dict(record) for record in session.run(RULE_EXAMPLES)]
+
+
+def get_job_descriptions(department_id: str) -> list[dict[str, str]]:
+    """Действующие должностные инструкции подразделения: [{'id', 'title', 'text', 'duties'}].
+
+    duties — список обязанностей, выписанный из текста при загрузке; пуст,
+    если его ещё нет.
+    """
+    with get_driver().session() as session:
+        return [dict(record) for record in
+                session.run(DEPARTMENT_JOB_DESCRIPTIONS, department_id=department_id)]
+
+
+def get_job_rules(attributes: list[str], department_id: Optional[str] = None) -> list[dict[str, Any]]:
+    """Правила на атрибутах, определяемых по должностным инструкциям.
+
+    Пустой список — для подразделения таких правил нет, сравнивать незачем.
+    """
+    with get_driver().session() as session:
+        return [dict(record) for record in session.run(
+            JOB_RULES_FOR_DEPARTMENT, attributes=attributes, department_id=department_id)]
 
 
 def get_all_attributes() -> list[str]:

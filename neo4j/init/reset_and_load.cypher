@@ -52,6 +52,14 @@ FOR (d:Department) REQUIRE d.departmentId IS UNIQUE;
 CREATE CONSTRAINT user_login IF NOT EXISTS
 FOR (u:User) REQUIRE u.login IS UNIQUE;
 
+// Настройки сервиса и ключи доступа внешних систем (api/settings.py,
+// api/apikeys.py). В выгрузку не попадают.
+CREATE CONSTRAINT setting_key IF NOT EXISTS
+FOR (s:Setting) REQUIRE s.key IS UNIQUE;
+
+CREATE CONSTRAINT api_key_id IF NOT EXISTS
+FOR (k:ApiKey) REQUIRE k.keyId IS UNIQUE;
+
 CREATE FULLTEXT INDEX rule_description_ft IF NOT EXISTS
 FOR (r:Rule) ON EACH [r.description];
 
@@ -62,6 +70,7 @@ FOR (r:Rule) ON EACH [r.description];
 //   CALL { ... } IN TRANSACTIONS OF 10000 ROWS;
 MATCH (n) WHERE n:Order OR n:Clause OR n:Rule
              OR n:CheckTarget OR n:ViolationExample OR n:Department
+             OR n:JobDescription
 DETACH DELETE n;
 
 // ---------- Атрибуты (:CheckTarget) ----------

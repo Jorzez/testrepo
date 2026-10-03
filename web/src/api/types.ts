@@ -92,12 +92,31 @@ export interface Order extends Extra {
   clauses: Clause[];
 }
 
+/** Чем определяется атрибут; без source — по тексту цели. */
+export type TargetSource = "job_descriptions";
+
 export interface CheckTarget extends Extra {
   nodeId: string;
   status: Status;
   name: string;
+  /** Для source = job_descriptions — критерий сравнения цели с инструкциями. */
   description: string;
+  source?: TargetSource | null;
   rules: string[];
+}
+
+/** Должностная инструкция подразделения; текст читается отдельно по nodeId. */
+export interface JobDescriptionRef {
+  nodeId: string;
+  jobDescriptionId: string | null;
+  title: string;
+  status: Status;
+  /** Длина текста инструкции в символах. */
+  chars: number;
+  /** Сколько обязанностей выписано из текста; 0 — списка нет, сравнение идёт по тексту. */
+  duties: number;
+  /** Список обязанностей просмотрен редактором. */
+  dutiesReviewed: boolean;
 }
 
 export interface Department extends Extra {
@@ -107,6 +126,7 @@ export interface Department extends Extra {
   name: string;
   onlyRules: string[];
   exceptRules: { ruleId: string; status: ExceptionStatus | null }[];
+  jobDescriptions: JobDescriptionRef[];
 }
 
 export interface FlatClause {
@@ -127,7 +147,8 @@ export interface Descendants {
   examples: number;
 }
 
-export type NodeKind = "Order" | "Clause" | "Rule" | "ViolationExample" | "CheckTarget" | "Department";
+export type NodeKind = "Order" | "Clause" | "Rule" | "ViolationExample" | "CheckTarget" | "Department"
+  | "JobDescription";
 
 export interface IssueItem {
   label: string;
@@ -152,12 +173,161 @@ export interface Diagnostics {
   problems: string[];
 }
 
+/** Настройки сервиса (api/settings.py). */
+export interface Settings {
+  /** Примеры каталога в промпте извлечения атрибутов. */
+  promptExamples: boolean;
+  /** Цель с указаниями для модели автоматически не разрешается. */
+  injectionGuard: boolean;
+  /** Примеров «есть» и «нет» на атрибут в промпте. */
+  promptExamplesPerKind: number;
+  /** Помнить ответ на ту же цель того же подразделения. */
+  checkCache: boolean;
+  checkCacheTtlSeconds: number;
+  /** Пакетная проверка разрешена. */
+  bulkChecks: boolean;
+  /** Целей в минуту на пользователя или ключ; 0 — без ограничения. */
+  checkRatePerMinute: number;
+  /** Проверки записываются в историю. */
+  historyEnabled: boolean;
+  /** Срок хранения истории в днях; 0 — не удалять. */
+  historyRetentionDays: number;
+  /** Проверка по ключам доступа разрешена. */
+  apiKeysEnabled: boolean;
+  /** Режим обслуживания: сервис открыт только администратору. */
+  maintenance: boolean;
+}
+
+/** Ключ доступа внешней системы (api/apikeys.py). */
+export interface ApiKey {
+  keyId: string;
+  name: string;
+  createdAt: string | null;
+  createdBy: string | null;
+  lastUsedAt: string | null;
+}
+/** Ответ создания: сам ключ есть только в нём. */
+export interface ApiKeyCreated extends ApiKey {
+  key: string;
+}
+
+/** Пример, который проверка на модели не подтвердила, не смогла проверить или пропустила. */
+export interface ExampleCheckItem {
+  nodeId: string;
+  exampleId: string | null;
+  text: string;
+  isViolation: boolean;
+  ruleNodeId: string;
+  ruleId: string | null;
+  ruleType: RuleType;
+  ruleText: string | null;
+  order: string | null;
+  clause: string | null;
+  targets: string[];
+  outcome: "mismatched" | "failed" | "skipped";
+  /** Атрибуты правила, которые модель нашла и не нашла в тексте примера. */
+  found: string[];
+  missing: string[];
+  /** Почему пример не проверен или пропущен. */
+  reason: string | null;
+}
+
+/** Ход и результат проверки примеров на модели (api/examples_check.py). */
+export interface ExamplesCheck {
+  state: "idle" | "running" | "done" | "failed";
+  startedAt: string | null;
+  finishedAt: string | null;
+  startedBy: string | null;
+  total: number;
+  done: number;
+  error: string | null;
+  /** Каталог правили после прогона: результат мог устареть. */
+  stale: boolean;
+  counts: { matched: number; mismatched: number; failed: number; skipped: number };
+  items: ExampleCheckItem[];
+}
+
 export interface RepairReport {
   orders: number;
   clauses: number;
   rules: number;
   examples: number;
   statuses: number;
+}
+
+/** Узел и связь каталога для визуального графа (api/catalog.py: graph_view). */
+export interface GraphNode {
+  id: string;
+  label: NodeKind;
+  title: string;
+  detail: string;
+  status: Status;
+  type?: RuleType;
+}
+export interface GraphEdge {
+  source: string;
+  target: string;
+  type: string;
+  status: string | null;
+}
+
+/** Мониторинг (api/monitoring.py) — только администратору. */
+export interface MonitoringNow {
+  llm: { capacity: number; reserve: number; running: number; waiting: number };
+  checks: {
+    running: number;
+    queued: number;
+    batches: { id: string; login: string | null; total: number; done: number; started_at: string }[];
+  };
+  recent: {
+    window_seconds: number; checks: number; per_minute: number; avg_ms: number | null;
+    cached: number; manual_review: number;
+  };
+  cache: { entries: number; max_entries: number; ttl_seconds: number; hits: number; misses: number };
+  history: { pending: number; dropped: number; retention_days: number; enabled: boolean };
+  /** null — vLLM не ответил. */
+  vllm: { running?: number; waiting?: number; kv_cache_usage?: number } | null;
+  neo4j: boolean;
+  uptime_seconds: number;
+}
+
+export interface CheckAggregate {
+  total: number;
+  avg_ms: number | null;
+  /** Среднее без ответов из кэша. */
+  avg_computed_ms: number | null;
+  p95_ms: number | null;
+  max_ms: number | null;
+  avg_queue_ms: number | null;
+  avg_llm_ms: number | null;
+  llm_calls: number | null;
+  cached: number;
+  allowed: number;
+  violations: number;
+  manual_review: number;
+}
+export type StatsStep = "minute" | "hour" | "day" | "week" | "month";
+export type CheckMode = "single" | "bulk";
+export interface MonitoringStats {
+  step: StatsStep;
+  timezone: string;
+  totals: CheckAggregate | null;
+  buckets: (CheckAggregate & { bucket: string })[];
+}
+export interface CheckRecord {
+  at: string;
+  ms: number;
+  status: CheckStatus;
+  department_id: string | null;
+  login: string | null;
+  mode: CheckMode;
+  batch_id: string | null;
+  cached: boolean;
+  llm_calls: number;
+  llm_ms: number;
+  queue_ms: number;
+  violations: string[];
+  goal: string;
 }
 
 export type CheckStatus = "ALLOWED" | "VIOLATIONS_FOUND" | "NEEDS_MANUAL_REVIEW";
@@ -174,6 +344,9 @@ interface ViolationBase {
   attribute: string;
   example_kind: "violation" | "correct";
   examples: (string | null)[];
+  /** Обязанности из должностных инструкций, с которыми совпала цель;
+      есть только у атрибута, определяемого по инструкциям. */
+  matched_duties?: { job_description_id: string | null; title: string | null; duty: string | null }[];
 }
 
 export interface Violation extends ViolationBase {

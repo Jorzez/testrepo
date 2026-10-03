@@ -7,6 +7,7 @@ import { useCatalog } from "../../state/catalog";
 import { Spinner } from "../../ui/common";
 import { useDialogs } from "../../ui/Dialogs";
 import { errorText, useToast } from "../../ui/Toasts";
+import { ExamplesCheck } from "./ExamplesCheck";
 
 /* Что мешает проверкам работать честно. «Показать» ведёт к объекту
    в каталоге с подсветкой. Диагностика перечитывается при каждом входе
@@ -20,7 +21,7 @@ const SEVERITY: Record<Issue["severity"], { label: string; cls: string }> = {
 
 type LoadState = { kind: "loading" } | { kind: "error"; message: string } | { kind: "ready"; report: Diagnostics };
 
-export function HealthTab({ hidden }: { hidden: boolean }) {
+export function HealthTab() {
   const { goToNode, reload, refreshHealth } = useCatalog();
   const { confirm } = useDialogs();
   const { isAdmin } = useAuth();
@@ -38,7 +39,7 @@ export function HealthTab({ hidden }: { hidden: boolean }) {
     void refreshHealth();
   }, [refreshHealth]);
 
-  useEffect(() => { if (!hidden) void load(); }, [hidden, load]);
+  useEffect(() => { void load(); }, [load]);
 
   async function repair() {
     const ok = await confirm({
@@ -68,7 +69,7 @@ export function HealthTab({ hidden }: { hidden: boolean }) {
   }
 
   return (
-    <section id="tab-health" className={hidden ? "hidden" : ""}>
+    <section id="tab-health">
       <div className="page-head">
         <div>
           <h1>Замечания к данным</h1>
@@ -87,6 +88,7 @@ export function HealthTab({ hidden }: { hidden: boolean }) {
         {state.kind === "ready" && <Report report={state.report} repairing={repairing} onRepair={isAdmin ? repair : null}
           onGoTo={(nodeId, kind) => void goToNode(nodeId, kind)} />}
       </div>
+      <ExamplesCheck onGoTo={(nodeId, kind) => void goToNode(nodeId, kind)} />
     </section>
   );
 }

@@ -14,9 +14,15 @@ import audit
 import auth
 import diagnostics
 import graph
+import history
+import metrics
 import schemas
+import settings
 from agent import check_goal, check_goals
+from examples_check import router as examples_router
+from monitoring import router as monitoring_router
 from routes import router as catalog_router
+from settings_routes import router as settings_router
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO").upper(),
@@ -34,7 +40,9 @@ async def lifespan(app: FastAPI):
     else:
         log.warning("Neo4j недоступен на старте, повторим при первом запросе")
     auth.check_config()
+    history.start()
     yield
+    history.stop()
     graph.close_driver()
 
 
@@ -71,7 +79,10 @@ async def guard(request: Request, call_next):
     started = time.monotonic()
     status = 500
     try:
-        if unsafe and request.headers.get("x-requested-with") != "XMLHttpRequest":
+        # Запрос с ключом доступа cookie не использует, а заголовок Authorization
+        # чужая страница без CORS поставить не может — как и X-Requested-With.
+        if (unsafe and request.headers.get("x-requested-with") != "XMLHttpRequest"
+                and not auth.bearer_token(request)):
             response = JSONResponse(status_code=403,
                                     content={"detail": "Запрос отклонён: нет заголовка X-Requested-With"})
         else:
@@ -95,8 +106,15 @@ async def guard(request: Request, call_next):
 app.include_router(auth.router)
 # CRUD над приказами, пунктами, правилами, атрибутами, примерами и подразделениями.
 app.include_router(catalog_router)
+# Проверка примеров правил на модели: каталог не меняет, поэтому отдельно от него.
+app.include_router(examples_router)
+# Очередь, нагрузка и история проверок — только администратору.
+app.include_router(monitoring_router)
+# Переключатели проверки и ключи доступа внешних систем — только администратору.
+app.include_router(settings_router)
 
-# Проверка целей и словарь атрибутов доступны любому вошедшему пользователю.
+# Словарь атрибутов доступен любому вошедшему пользователю; проверка целей —
+# ещё и внешним системам с ключом доступа (auth.checker).
 VIEWER = [Depends(auth.viewer)]
 
 
@@ -109,17 +127,20 @@ class GoalRequest(BaseModel):
     )
 
 
-@app.post("/check-goal", dependencies=VIEWER)
-def check(req: GoalRequest):
+@app.post("/check-goal")
+def check(req: GoalRequest, user: auth.Principal = Depends(auth.checker)):
     """Проверка цели на соответствие действующим приказам."""
+    auth.spend_checks(user, 1)
+    metrics.set_actor(user.login)
     return check_goal(req.goal, department_id=req.department_id)
 
 
 MAX_BATCH = int(os.getenv("MAX_GOALS_PER_REQUEST", "200"))
 
 
-@app.post("/check-goals", dependencies=VIEWER)
-def check_many(items: list[schemas.GoalItem] = Body(..., description="Массив целей")):
+@app.post("/check-goals")
+def check_many(items: list[schemas.GoalItem] = Body(..., description="Массив целей"),
+               user: auth.Principal = Depends(auth.checker)):
     """Пакетная проверка целей.
 
     Вход — массив объектов вида {"goal": "...", "department_id": "...", "id": "..."}.
@@ -133,6 +154,13 @@ def check_many(items: list[schemas.GoalItem] = Body(..., description="Масси
             status_code=413,
             detail=f"За один раз можно проверить не более {MAX_BATCH} целей, передано {len(items)}",
         )
+    if not settings.flag("bulkChecks"):
+        raise HTTPException(
+            status_code=503,
+            detail="Пакетная проверка временно отключена администратором. Цели можно проверять по одной",
+        )
+    auth.spend_checks(user, len(items))
+    metrics.set_actor(user.login)
     return check_goals([item.model_dump() for item in items])
 
 

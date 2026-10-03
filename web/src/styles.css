@@ -43,7 +43,7 @@ b,strong{font-weight:700}
 .brand img{height:34px;display:block}
 .brand small{display:block;font-weight:400;font-size:11px;color:var(--ink-3)}
 .nav-item{display:flex;align-items:center;gap:12px;width:100%;padding:11px 14px;border:0;border-radius:12px;background:none;
-  font-weight:500;color:var(--ink-2);cursor:pointer;text-align:left}
+  font-weight:500;color:var(--ink-2);cursor:pointer;text-align:left;text-decoration:none;box-sizing:border-box}
 .nav-item:hover{background:var(--panel-2);color:var(--ink)}
 .nav-item[aria-selected="true"]{background:var(--soft);color:var(--brand)}
 .nav-item svg{width:18px;height:18px;flex:none}
@@ -89,6 +89,30 @@ input:focus,textarea:focus,.select:focus-visible,.select.open{outline:2px solid 
   stroke-linejoin:round;transition:transform .15s}
 .select.open svg{transform:rotate(180deg);stroke:var(--brand)}
 .select.pill{padding-left:18px;padding-right:16px}
+
+/* Дата и время (ui/DateTime.tsx): поле как у списка, окно с календарём и временем. */
+.select.dt svg,.select.dt.open svg{width:14px;height:14px;transform:none;stroke-width:1.3}
+.dt-pop{position:fixed;z-index:90;background:var(--panel);border:1px solid var(--line);border-radius:14px;
+  box-shadow:var(--shadow-lg);padding:12px}
+.dt-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.dt-month{font-weight:600;font-size:14px}
+.dt-nav{display:grid;place-items:center;width:30px;height:30px;border:0;border-radius:9px;background:none;cursor:pointer}
+.dt-nav:hover{background:var(--panel-2)}
+.dt-nav svg{width:12px;height:12px;fill:none;stroke:var(--ink-2);stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.dt-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px}
+.dt-weekday{text-align:center;font-size:11.5px;color:var(--ink-3);padding:4px 0;text-transform:uppercase}
+.dt-day{height:34px;border:0;border-radius:9px;background:none;cursor:pointer;font-size:13.5px;font-weight:500}
+.dt-day:hover:not(:disabled){background:var(--panel-2)}
+.dt-day.outside{color:var(--ink-3)}
+.dt-day.today{box-shadow:inset 0 0 0 1px var(--line)}
+.dt-day[aria-pressed="true"],.dt-day[aria-pressed="true"]:hover{background:var(--brand);color:#fff}
+.dt-day:disabled{opacity:.35;cursor:default}
+.dt-day:focus-visible,.dt-nav:focus-visible{outline:2px solid var(--brand);outline-offset:1px}
+.dt-foot{display:flex;align-items:center;justify-content:space-between;margin-top:10px;padding-top:10px;
+  border-top:1px solid var(--line-soft)}
+.dt-time{display:flex;align-items:center;gap:6px;font-size:13px}
+.dt-time .dim{margin-right:4px}
+.dt-time input[type=text]{width:44px;padding:6px 0;text-align:center;border-radius:9px;font-variant-numeric:tabular-nums}
 .select-pop{position:fixed;z-index:90;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:14px;
   box-shadow:var(--shadow-lg);padding:5px;min-width:160px}
 .select-pop [role=option]{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 12px;border-radius:9px;
@@ -118,6 +142,8 @@ label.check{display:inline-flex;align-items:center;gap:7px;cursor:pointer;color:
 .chip{display:inline-flex;align-items:center;gap:6px;min-height:28px;padding:2px 12px;border-radius:50px;background:var(--panel);
   border:1px solid var(--line);font-size:13px;font-weight:500}
 .chip.blue{background:var(--soft);border-color:transparent;color:var(--brand)}
+.chip-btn{cursor:pointer;font:inherit;font-size:13px}
+.chip-btn:hover{border-color:var(--brand);color:var(--brand)}
 .chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow)}
 .card.pad{padding:18px 20px}
@@ -314,3 +340,125 @@ table{width:100%;border-collapse:collapse}
 .issue .items{margin-top:11px;display:flex;flex-direction:column;gap:5px}
 .issue .item{display:flex;gap:9px;align-items:center;justify-content:space-between;padding:6px 6px 6px 12px;background:var(--panel-2);
   border:1px solid var(--line-soft);border-radius:10px;font-size:13.5px}
+.issue .item.example{align-items:flex-start;padding:9px 6px 9px 12px}
+.issue .item.example .dim{margin-top:3px}
+
+/* ------------------------------ настройки --------------------------------- */
+.settings .setting{display:flex;gap:18px;align-items:flex-start;padding:16px 20px}
+.settings .setting + .setting{border-top:1px solid var(--line-soft)}
+.settings .muted{font-size:13.5px;margin-top:3px}
+.settings .text{flex:1;min-width:0}
+.settings .control{flex:none}
+.settings .control input[type=number]{flex:none;width:84px;padding:7px 10px;text-align:right;appearance:textfield;-moz-appearance:textfield}
+.settings .control input[type=number]::-webkit-inner-spin-button{appearance:none;-webkit-appearance:none}
+.settings .control input[aria-invalid="true"]{border-color:var(--danger)}
+.switch{flex:none;position:relative;width:30px;height:18px;margin-top:3px;border:0;border-radius:9px;padding:0;
+  background:var(--ink-3);cursor:pointer;transition:background .15s}
+.switch::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;
+  box-shadow:0 1px 2px rgba(0,0,0,.25);transition:transform .15s}
+.switch[aria-checked="true"]{background:var(--brand)}
+.switch[aria-checked="true"]::after{transform:translateX(12px)}
+.switch:disabled{opacity:.6;cursor:default}
+.switch:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.key-value{word-break:break-all;user-select:all}
+
+/* ------------------------------ мониторинг -------------------------------- */
+.block-title{margin:26px 0 12px}
+.block-title .dim{font-weight:400;margin-left:8px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px}
+.tile{padding:22px 24px;min-height:132px}
+.tile .small{font-size:14px}
+.tile b{display:block;font-size:36px;font-weight:500;line-height:46px;margin:6px 0 4px}
+.tile.warn{border-color:var(--warn-line);background:var(--warn-soft)}
+.charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:12px;margin:12px 0}
+.chart svg{display:block;width:100%;height:auto;margin-top:8px}
+.chart text{font-size:11px;fill:var(--ink-3)}
+.chart .grid{stroke:var(--line-soft)}
+.chart .bar{fill:#2a78d6}
+.chart .bar.active{fill:var(--navy)}
+.chart-tip{font-size:13px;color:var(--ink-2);min-height:20px}
+.scroll-x{overflow-x:auto}
+th.r,td.r{text-align:right !important;white-space:nowrap}
+.meter{height:8px;border-radius:4px;background:var(--line-soft);overflow:hidden;margin-bottom:4px}
+.meter span{display:block;height:100%;background:#2a78d6;border-radius:4px}
+
+/* --------------------------------- граф ----------------------------------- */
+.graph-page{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:16px;align-items:start}
+.graph-box{position:relative;height:calc(100vh - 230px);min-height:420px;cursor:grab;user-select:none}
+.graph-box:active{cursor:grabbing}
+.graph-box svg{display:block;width:100%;height:100%}
+.graph-box .edge{stroke:#b9c2cf;stroke-width:1.2}
+.graph-box .edge.lit{stroke:var(--ink-2);stroke-width:2}
+.graph-box .edge.faded{opacity:.25}
+.graph-box .node{cursor:pointer}
+.graph-box .node circle{stroke:var(--panel);stroke-width:2}
+.graph-box .node .hit{fill:transparent;stroke:none}
+.graph-box .node.selected .dot{stroke:var(--ink);stroke-width:2.5}
+.graph-box .node.archived{opacity:.45}
+.graph-box .node.faded{opacity:.2}
+.graph-box .node text{font-size:11px;fill:var(--ink-2);pointer-events:none;paint-order:stroke;stroke:var(--panel);stroke-width:3px}
+.graph-zoom{position:absolute;right:12px;top:12px;display:flex;gap:6px}
+.graph-tip{position:absolute;z-index:5;max-width:280px;padding:8px 12px;border-radius:10px;background:var(--panel);
+  border:1px solid var(--line);box-shadow:var(--shadow-lg);pointer-events:none}
+.swatch{display:inline-block;width:10px;height:10px;border-radius:50%;flex:none}
+.legend.off{opacity:.45}
+.legend.off .swatch{background:var(--ink-3) !important}
+.graph-link{display:flex;flex-direction:column;gap:2px;width:100%;text-align:left;padding:8px 10px;margin-top:6px;
+  border:1px solid var(--line-soft);border-radius:10px;background:var(--panel-2);cursor:pointer}
+.graph-link:hover{border-color:var(--brand)}
+.pager{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+
+/* Трассировка проверки на графе: путь проявляется от цели шаг за шагом.
+   Линия дорисовывается (pathLength = 1), затем узел на её конце «загорается»;
+   задержка шага задаётся в разметке. Остальной граф плавно уходит в фон. */
+.graph-box .edge,.graph-box .node{transition:opacity .35s ease}
+.graph-box .edge.trace{stroke-width:2.6;stroke-linecap:round;stroke-dasharray:1;stroke-dashoffset:1;
+  animation:trace-draw .45s ease-out both}
+.graph-box .edge.trace.path{stroke:var(--ink-3)}
+.graph-box .edge.trace.ok{stroke:var(--ok)}
+.graph-box .edge.trace.bad{stroke:var(--danger)}
+.graph-box .edge.trace.exempt{stroke:var(--warn-line)}
+.graph-box .edge.trace.missing{stroke-dasharray:.03 .05;stroke-dashoffset:0;animation:trace-fade .45s ease-out both}
+@keyframes trace-draw{to{stroke-dashoffset:0}}
+@keyframes trace-fade{from{opacity:0}}
+.graph-box .node .halo{fill:none;stroke-width:3;transform-box:fill-box;transform-origin:center;
+  animation:trace-pop .4s ease-out both,trace-pulse 1.8s ease-in-out .4s infinite}
+.graph-box .node.ok .halo{stroke:var(--ok)}
+.graph-box .node.bad .halo{stroke:var(--danger)}
+.graph-box .node.exempt .halo{stroke:var(--warn-line)}
+.graph-box .node.traced .dot,.graph-box .node .mark{transform-box:fill-box;transform-origin:center;
+  animation:trace-pop .4s cubic-bezier(.3,1.6,.5,1) both}
+@keyframes trace-pop{from{opacity:0;transform:scale(.3)}}
+@keyframes trace-pulse{50%{stroke-opacity:.3}}
+.graph-box .node .mark circle{stroke:var(--panel);stroke-width:1.5}
+.graph-box .node.ok .mark circle{fill:var(--ok)}
+.graph-box .node.bad .mark circle{fill:var(--danger)}
+.graph-box .node.exempt .mark circle{fill:var(--warn-line)}
+.graph-box .node .mark text{fill:#fff;font-size:9px;font-weight:700;stroke:none}
+.graph-box .node.traced > text{fill:var(--ink);font-weight:500}
+.graph-box .node.goal{transform-box:fill-box;transform-origin:center}
+.graph-box .node.goal rect{fill:var(--navy);stroke:var(--panel);stroke-width:2;transform-box:fill-box;transform-origin:center;
+  animation:trace-pop .4s cubic-bezier(.3,1.6,.5,1) both}
+.graph-box .node.goal text{fill:#fff;font-size:12px;font-weight:700;stroke:none}
+.trace-legend{display:flex;flex-wrap:wrap;gap:6px 14px;color:var(--ink-2)}
+.trace-legend i,.trace-mark{display:inline-grid;place-items:center;width:16px;height:16px;border-radius:50%;color:#fff;
+  font-style:normal;font-size:10px;font-weight:700;vertical-align:-2px}
+.trace-legend i.ok,.trace-mark.ok{background:var(--ok)}
+.trace-legend i.bad,.trace-mark.bad{background:var(--danger)}
+.trace-legend i.exempt,.trace-mark.exempt{background:var(--warn-line)}
+
+/* Переход между разделами: подложка активного пункта меню переезжает от
+   прежнего пункта к новому, проходя мимо всех пунктов между ними. Положение
+   и высоту подложке задаёт App.tsx по активной кнопке. */
+.side nav{position:relative}
+.nav-ind{position:absolute;left:0;right:0;top:0;border-radius:12px;background:var(--soft);pointer-events:none;
+  transition:transform .35s cubic-bezier(.4,0,.2,1),height .35s cubic-bezier(.4,0,.2,1)}
+.nav-item{position:relative;z-index:1;transition:color .25s ease}
+.nav-item[aria-selected="true"],.nav-item[aria-selected="true"]:hover{background:none}
+
+@media (prefers-reduced-motion:reduce){
+  .nav-ind{transition:none}
+  .graph-box .edge.trace,.graph-box .node .halo,.graph-box .node.traced .dot,.graph-box .node .mark,
+  .graph-box .node.goal rect{animation:none}
+  .graph-box .edge.trace{stroke-dashoffset:0}
+}

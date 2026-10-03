@@ -21,7 +21,7 @@ const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString("ru-RU"
 
 type LoadState = { kind: "loading" } | { kind: "error"; message: string } | { kind: "ready"; users: User[] };
 
-export function UsersTab({ hidden }: { hidden: boolean }) {
+export function UsersTab() {
   const { user: me } = useAuth();
   const { openForm, confirm } = useDialogs();
   const toast = useToast();
@@ -35,7 +35,7 @@ export function UsersTab({ hidden }: { hidden: boolean }) {
     }
   }, []);
 
-  useEffect(() => { if (!hidden) void load(); }, [hidden, load]);
+  useEffect(() => { void load(); }, [load]);
 
   const change = async (fn: () => Promise<unknown>, success: string) => {
     await fn();
@@ -91,7 +91,7 @@ export function UsersTab({ hidden }: { hidden: boolean }) {
   ];
 
   return (
-    <section id="tab-users" className={hidden ? "hidden" : ""}>
+    <section id="tab-users">
       <div className="page-head">
         <div>
           <h1>Пользователи</h1>

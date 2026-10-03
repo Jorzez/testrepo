@@ -6,6 +6,9 @@
 Логины из AUTH_ADMIN_LOGINS — администраторы всегда: без этого первого
 администратора некому было бы назначить.
 
+Внешние системы проверяют цели по ключу доступа (apikeys.py) в заголовке
+Authorization: Bearer — без сессии и только проверку целей.
+
 Сессия — случайный токен в cookie (HttpOnly, SameSite=Strict, Secure),
 на сервере хранится только его SHA-256. Сессии и счётчики неудачных входов
 лежат в памяти процесса: перезапуск API требует войти заново, а uvicorn
@@ -31,17 +34,24 @@ from typing import Callable, Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
+import apikeys
 import audit
+import settings
 import users
 
 log = logging.getLogger(__name__)
 
 SESSION_COOKIE = "gc_session"
 RANK = {role: rank for rank, role in enumerate(users.ROLES)}
+# Внешняя система с ключом доступа (apikeys.py): ниже читателя — ей доступна
+# только проверка целей (checker), ни каталог, ни интерфейс.
+SERVICE_ROLE = "service"
+RANK[SERVICE_ROLE] = -1
 PBKDF2_ITERATIONS = 600_000
 
 # Один ответ на «нет такого пользователя», «роль не назначена» и «неверный
 # пароль»: форма входа не должна подсказывать, какие логины существуют.
+MAINTENANCE = "Идёт обслуживание сервиса: проверка целей и каталог временно недоступны. Попробуйте позже"
 LOGIN_FAILED = "Неверный логин или пароль, либо доступ к интерфейсу не назначен"
 
 _now: Callable[[], float] = time.monotonic
@@ -283,8 +293,61 @@ class Throttle:
             self._fails.clear()
 
 
+class RateLimit:
+    """Скользящее минутное окно: сколько целей проверил пользователь или ключ."""
+
+    WINDOW = 60.0
+    MAX_KEYS = 10_000
+
+    def __init__(self) -> None:
+        self._spent: dict[str, deque[tuple[float, int]]] = {}
+        self._lock = threading.Lock()
+
+    def take(self, key: str, amount: int, limit: int) -> int:
+        """Списывает amount; возвращает, сколько секунд ждать, если лимит исчерпан (0 — принято).
+
+        Запрос крупнее самого лимита проходит при пустом окне: иначе пакет
+        больше лимита не прошёл бы никогда.
+        """
+        if limit <= 0:
+            return 0
+        now = _now()
+        with self._lock:
+            if len(self._spent) >= self.MAX_KEYS:
+                for stale in [k for k, d in self._spent.items() if not d or now - d[-1][0] > self.WINDOW]:
+                    del self._spent[stale]
+            spent = self._spent.setdefault(key, deque())
+            while spent and now - spent[0][0] > self.WINDOW:
+                spent.popleft()
+            used = sum(n for _, n in spent)
+            if spent and used + amount > limit:
+                return int(spent[0][0] + self.WINDOW - now) + 1
+            spent.append((now, amount))
+            return 0
+
+    def reset(self) -> None:
+        with self._lock:
+            self._spent.clear()
+
+
 sessions = SessionStore()
 throttle = Throttle()
+check_rate = RateLimit()
+
+
+def spend_checks(user: "Principal", goals: int) -> None:
+    """Учитывает goals проверок за пользователем или ключом; сверх лимита — 429.
+
+    Лимит — настройка checkRatePerMinute: целей в минуту на каждого, 0 выключает.
+    """
+    wait = check_rate.take(user.login, goals, settings.number("checkRatePerMinute"))
+    if wait:
+        audit.event("check_throttled", login=user.login, goals=goals, retry_after=wait)
+        raise HTTPException(
+            status_code=429,
+            detail=f"Слишком много проверок за минуту. Повторите через {wait} с.",
+            headers={"Retry-After": str(wait)},
+        )
 
 
 # --------------------------------------------------------------------------
@@ -315,12 +378,38 @@ def resolve_account(login: str) -> Optional[Principal]:
     except Exception as exc:  # noqa: BLE001
         log.error("Реестр пользователей недоступен: %s", exc)
         raise HTTPException(status_code=503, detail="Реестр пользователей недоступен, попробуйте позже") from exc
-    if not row or row["status"] != users.ACTIVE_STATUS or row["role"] not in RANK:
+    if not row or row["status"] != users.ACTIVE_STATUS or row["role"] not in users.ROLES:
         return None
     return Principal(login, row["role"], row["displayName"])
 
 
+def bearer_token(request: Request) -> Optional[str]:
+    """Ключ доступа из заголовка Authorization: Bearer …; None — заголовка нет."""
+    scheme, _, token = request.headers.get("authorization", "").partition(" ")
+    return token.strip() if scheme.lower() == "bearer" and token.strip() else None
+
+
+def _key_user(request: Request, token: str) -> Principal:
+    if not settings.flag("apiKeysEnabled"):
+        audit.event("api_key_rejected", ip=audit.client_ip(request), reason="disabled")
+        raise HTTPException(status_code=403, detail="Проверка по ключам доступа отключена администратором")
+    try:
+        key = apikeys.resolve(token)
+    except Exception as exc:  # noqa: BLE001
+        log.error("Реестр ключей доступа недоступен: %s", exc)
+        raise HTTPException(status_code=503, detail="Реестр ключей доступа недоступен, попробуйте позже") from exc
+    if key is None:
+        audit.event("api_key_rejected", ip=audit.client_ip(request))
+        raise HTTPException(status_code=401, detail="Ключ доступа недействителен или отозван")
+    return Principal("key:" + key["name"], SERVICE_ROLE)
+
+
 def current_user(request: Request) -> Principal:
+    """Кто делает запрос: внешняя система с ключом либо пользователь с сессией."""
+    key = bearer_token(request)
+    if key:
+        request.state.user = _key_user(request, key)
+        return request.state.user
     token = request.cookies.get(SESSION_COOKIE)
     login = sessions.resolve(token) if token else None
     account = resolve_account(login) if login else None
@@ -336,6 +425,9 @@ def require(role: str) -> Callable[..., Principal]:
     """Зависимость маршрута: пользователь с ролью не ниже указанной."""
 
     def dependency(user: Principal = Depends(current_user)) -> Principal:
+        # Обслуживание: работает только администратор; вход и /auth/me остаются.
+        if user.role != "admin" and settings.flag("maintenance"):
+            raise HTTPException(status_code=503, detail=MAINTENANCE, headers={"Retry-After": "300"})
         if RANK[user.role] < RANK[role]:
             raise HTTPException(status_code=403, detail=f"Недостаточно прав: нужна роль «{ROLE_NAMES[role]}»")
         return user
@@ -344,6 +436,8 @@ def require(role: str) -> Callable[..., Principal]:
 
 
 ROLE_NAMES = {"viewer": "читатель", "editor": "редактор", "admin": "администратор"}
+# Проверка целей: любой вошедший пользователь или внешняя система с ключом.
+checker = require(SERVICE_ROLE)
 viewer = require("viewer")
 editor = require("editor")
 admin = require("admin")

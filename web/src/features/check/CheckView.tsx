@@ -16,13 +16,14 @@ import { errorText, useToast } from "../../ui/Toasts";
 const place = (v: Violation | Exemption) =>
   `Приказ ${v.order_number ?? "?"}, пункт ${v.clause_code ?? "?"}${v.clause_text ? " — " + v.clause_text : ""}`;
 
-export function CheckView({ hidden }: { hidden: boolean }) {
+export function CheckView() {
   const toast = useToast();
-  const { orders, departments, health, setSection } = useCatalog();
-  const [goal, setGoal] = useState("");
-  const [departmentId, setDepartmentId] = useState("");
+  const { orders, departments, health, setSection, setTrace, checkForm, setCheckForm } = useCatalog();
+  const { goal, departmentId, result } = checkForm;
+  const setGoal = (next: string) => setCheckForm({ goal: next });
+  const setDepartmentId = (next: string) => setCheckForm({ departmentId: next });
+  const setResult = (next: CheckResult | null) => setCheckForm({ result: next });
   const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<CheckResult | null>(null);
   const options = departments.filter((d) => d.departmentId && d.status === "active");
   const department = options.find((d) => d.departmentId === departmentId);
 
@@ -50,7 +51,7 @@ export function CheckView({ hidden }: { hidden: boolean }) {
   }
 
   return (
-    <section id="tab-check" className={hidden ? "hidden" : ""}>
+    <section id="tab-check">
       <div className="check-page">
         <div>
           <div className="hero">
@@ -71,7 +72,7 @@ export function CheckView({ hidden }: { hidden: boolean }) {
             )}
           </div>
 
-          {result && <Verdict result={result} total={applicable.filter(({ rule }) => {
+          {result && <Verdict result={result} onTrace={() => { setTrace(result); setSection("graph"); }} total={applicable.filter(({ rule }) => {
             const cell = departmentId ? cellState(rule, departmentId) : null;
             return !(cell?.kind === "exception" && cell.exception.status === "active");
           }).length} />}
@@ -135,7 +136,7 @@ export function CheckView({ hidden }: { hidden: boolean }) {
   );
 }
 
-function Verdict({ result, total }: { result: CheckResult; total: number }) {
+function Verdict({ result, total, onTrace }: { result: CheckResult; total: number; onTrace: () => void }) {
   const manual = result.status === "NEEDS_MANUAL_REVIEW";
   const bad = result.violations.length;
   return (
@@ -146,6 +147,7 @@ function Verdict({ result, total }: { result: CheckResult; total: number }) {
           : bad ? <span className="badge err lg">Нужно доработать</span> : <span className="badge ok lg">Нарушений нет</span>}
         {!manual && <span className="muted">{bad ? `не выполнено правил: ${bad} из ${total}` : `проверено правил: ${total}`}</span>}
         <div className="spacer" />
+        {!manual && <button className="btn sm" onClick={onTrace}>Показать на графе</button>}
         <span className="dim">подразделение: {result.department
           ? <Chip>{result.department.name || result.department.id}</Chip> : "не определено"}</span>
       </div>
@@ -154,6 +156,7 @@ function Verdict({ result, total }: { result: CheckResult; total: number }) {
 
       {result.violations.map((v, i) => {
         const examples = v.examples.filter((e): e is string => !!e);
+        const duties = (v.matched_duties ?? []).filter((m) => m.duty);
         return (
           <div key={i} className="vitem violation">
             <span className="ico bad">✕</span>
@@ -165,8 +168,11 @@ function Verdict({ result, total }: { result: CheckResult; total: number }) {
               )}
             </div>
             <div className="d">{place(v)}</div>
-            {(v.check_instruction || examples.length > 0) && (
+            {(v.check_instruction || examples.length > 0 || duties.length > 0) && (
               <div className="fix">
+                {duties.map((m, j) => (
+                  <div key={"d" + j}><b>Совпадает с обязанностью{m.title ? ` (${m.title})` : ""}:</b> «{m.duty}»</div>
+                ))}
                 {v.check_instruction && <div><b>Как исправить:</b> {v.check_instruction}</div>}
                 {examples.map((ex, j) => (
                   <div key={j}><b>{v.example_kind === "violation" ? "Так нельзя:" : "Пример:"}</b> «{ex}»</div>

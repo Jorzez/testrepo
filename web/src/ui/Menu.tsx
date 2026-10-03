@@ -90,15 +90,18 @@ function Popup({ menu, close }: { menu: OpenMenu; close: () => void }) {
   );
 }
 
-export function MenuButton({ items }: { items: () => MenuItem[] }) {
+/** label превращает кнопку «⋯» в плашку с названием объекта: так меню
+    получают вложенные объекты, которым не нужна отдельная строка. */
+export function MenuButton({ items, label }: { items: () => MenuItem[]; label?: string }) {
   const open = useContext(MenuContext);
   // В меню «⋯» только изменяющие действия — читателю оно не показывается.
-  if (!useAuth().canEdit) return null;
+  if (!useAuth().canEdit) return label ? <span className="chip">{label}</span> : null;
   return (
-    <button className="btn sm menu-btn" title="Действия" aria-label="Действия"
+    <button className={label ? "chip chip-btn" : "btn sm menu-btn"}
+      title={label ? undefined : "Действия"} aria-label={label ? undefined : "Действия"}
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => { e.stopPropagation(); open(e.currentTarget, items()); }}>
-      ⋯
+      {label ?? "⋯"}
     </button>
   );
 }

@@ -1,7 +1,7 @@
 import type { Page } from "@playwright/test";
 
 import { MOCK_PASSWORD } from "../mock/backend";
-import { expect, go, matrixRow, menu, mockApi, modal, openRule, orderDoc, panel, PROJECT, test, toast } from "./fixtures";
+import { check, choose, expect, go, optionsOf, matrixRow, menu, mockApi, modal, openRule, orderDoc, panel, PROJECT, test, toast } from "./fixtures";
 
 /* Вход, выход и то, что интерфейс показывает каждой роли. Сами права
    проверяет API (api/tests/test_auth.py) — здесь только то, что читатель
@@ -71,6 +71,13 @@ test.describe("читатель", () => {
 
   test("видит каталог, но не видит изменяющих действий", async ({ app }) => {
     await expect(app.getByRole("tab", { name: "Пользователи" })).toHaveCount(0);
+    await expect(app.getByRole("tab", { name: "Мониторинг" })).toHaveCount(0);
+
+    // Граф каталога открыт всем ролям.
+    await go(app, "Граф");
+    await expect(app.locator("#tab-graph .node")).toHaveCount(14);
+    await app.locator('#tab-graph .node[data-node="r:2"] .dot').click();
+    await expect(app.locator("#tab-graph aside")).toContainText("не применяется в (кандидат)");
 
     await go(app, "Правила");
     await expect(matrixRow(app, PROJECT)).toBeVisible();
@@ -161,5 +168,32 @@ test.describe("администратор", () => {
     await page.goto("/");
     await signIn(page, "editor");
     await expect(page.getByRole("alert")).toContainText("доступ к интерфейсу не назначен");
+  });
+});
+
+test.describe("мониторинг", () => {
+  test.use({ role: "admin" });
+
+  test("администратор видит нагрузку, показатели за период и историю", async ({ app }) => {
+    await check(app, "Улучшить работу с заявками");
+    await go(app, "Мониторинг");
+    const tab = app.locator("#tab-monitoring");
+    await expect(tab.getByText("Запросов у модели")).toBeVisible();
+    await expect(tab.getByText("Проверок за интервал")).toBeVisible();
+    await expect(tab.locator("#monitoringHistory tbody tr").first()).toContainText("Улучшить работу с заявками");
+
+    // Таблицы листаются, размер страницы меняется.
+    await expect(tab.locator("#monitoringHistory tbody tr")).toHaveCount(10);
+    await expect(tab.locator("#historyPager")).toContainText("1–10 из");
+    await tab.locator("#historyPager").getByRole("button", { name: "Вперёд" }).click();
+    await expect(tab.locator("#historyPager")).toContainText("Страница 2 из");
+    await choose(tab.locator("#historyPagerSize"), { value: "100" });
+    await expect(tab.locator("#monitoringHistory tbody tr")).toHaveCount(100);
+    await expect(tab.locator("#historyPager")).toContainText("1–100 из");
+    expect(await optionsOf(tab.locator("#historyPagerSize"))).toEqual(["10", "25", "50", "100"]);
+
+    await choose(tab.locator("#monitoringMode"), { value: "single" });
+    await tab.getByRole("button", { name: "Показать" }).click();
+    await expect(tab.locator("#monitoringHistory tbody tr")).toHaveCount(1);
   });
 });

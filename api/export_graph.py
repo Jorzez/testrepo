@@ -2,7 +2,8 @@
 """Выгрузка графа нормативных требований в идемпотентный Cypher-скрипт.
 
 Источник истины — база, а не файл в репозитории. Скрипт снимает с живой
-базы приказы, пункты, правила, атрибуты, примеры и подразделения и превращает их в
+базы приказы, пункты, правила, атрибуты, примеры, подразделения и должностные
+инструкции и превращает их в
 MERGE-скрипт, который дописывается в seed.cypher после маркера данных.
 После этого `docker compose up` воспроизводит граф один в один, а git diff
 показывает, что именно поменялось в нормативке.
@@ -32,10 +33,12 @@ NODE_KEYS: dict[str, str] = {
     "CheckTarget": "name",
     "ViolationExample": "exampleId",
     "Department": "departmentId",
+    "JobDescription": "jobDescriptionId",
 }
 
 # Порядок вывода: узлы раньше связей, приказы раньше пунктов.
-LABEL_ORDER = ["Order", "Clause", "Rule", "CheckTarget", "ViolationExample", "Department"]
+LABEL_ORDER = ["Order", "Clause", "Rule", "CheckTarget", "ViolationExample", "Department",
+               "JobDescription"]
 
 DATA_MARKER = "// ---------- Данные ----------"
 

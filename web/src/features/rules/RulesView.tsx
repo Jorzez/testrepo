@@ -27,10 +27,10 @@ function Cell({ state }: { state: CellState }) {
     : <span className="cell cand">кандидат</span>;
 }
 
-export function RulesView({ hidden }: { hidden: boolean }) {
+export function RulesView() {
   const { wizard } = useCatalog();
   return (
-    <section id="tab-rules" className={hidden ? "hidden" : ""}>
+    <section id="tab-rules">
       {wizard ? <RuleWizard preset={wizard} /> : <Matrix />}
     </section>
   );

@@ -104,7 +104,11 @@ if [[ "${SKIP_IMAGES:-0}" != "1" ]]; then
     docker pull --platform "$TARGET_PLATFORM" "$img"
   done
   log "docker save → $OUT/images.tar"
-  docker save -o "$OUT/images.tar" "${IMAGES[@]}" "$API_IMAGE" "$WEB_IMAGE"
+  # --platform обязателен (Docker 28+): у многоплатформенных образов скачан
+  # только вариант под сервер, и без флага save ищет остальные и падает
+  # с «content digest … not found».
+  docker save --platform "$TARGET_PLATFORM" -o "$OUT/images.tar" \
+    "${IMAGES[@]}" "$API_IMAGE" "$WEB_IMAGE"
   printf '%s\n' "${IMAGES[@]}" "$API_IMAGE" "$WEB_IMAGE" > "$OUT/images.list"
 fi
 

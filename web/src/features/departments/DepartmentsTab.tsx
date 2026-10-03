@@ -6,19 +6,21 @@ import { useActions } from "../actions";
 
 /* Справочник подразделений. Идентификатор — тот, что кадровая система
    передаёт в запросе проверки (department_id). Какие правила действуют
-   только здесь и какие здесь не применяются, задаётся у самого правила. */
+   только здесь и какие здесь не применяются, задаётся у самого правила.
+   Здесь же загружаются должностные инструкции: с ними сравнивается цель,
+   когда правило стоит на атрибуте, определяемом по инструкциям. */
 
-export function DepartmentsTab({ hidden }: { hidden: boolean }) {
+export function DepartmentsTab() {
   const { departments, showArchivedDepartments, reload } = useCatalog();
   const actions = useActions();
   const { canEdit } = useAuth();
 
   return (
-    <section id="tab-departments" className={hidden ? "hidden" : ""}>
+    <section id="tab-departments">
       <div className="page-head">
         <div>
           <h1>Подразделения</h1>
-          <div className="sub">Идентификатор передаёт кадровая система в запросе проверки. Где какое правило действует — в разделе «Правила».</div>
+          <div className="sub">Идентификатор передаёт кадровая система в запросе проверки. Где какое правило действует — в разделе «Правила». С должностными инструкциями сравнивается цель подразделения.</div>
         </div>
         {canEdit && <button className="btn primary" onClick={actions.addDepartment}>+ Подразделение</button>}
       </div>
@@ -33,8 +35,9 @@ export function DepartmentsTab({ hidden }: { hidden: boolean }) {
           <thead>
             <tr>
               <th style={{ width: "18%" }}>Идентификатор</th><th>Название</th>
-              <th style={{ width: "22%" }}>Только здесь действуют</th>
-              <th style={{ width: "22%" }}>Здесь не применяются</th>
+              <th style={{ width: "17%" }}>Только здесь действуют</th>
+              <th style={{ width: "17%" }}>Здесь не применяются</th>
+              <th style={{ width: "26%" }}>Должностные инструкции</th>
               <th style={{ width: 70 }} />
             </tr>
           </thead>
@@ -54,6 +57,18 @@ export function DepartmentsTab({ hidden }: { hidden: boolean }) {
                     <Chip key={r.ruleId}>{r.ruleId}{r.status === "active" ? "" : " · кандидат"}</Chip>
                   ))
                   : <span className="dim">—</span>}</td>
+                <td><div className="chips">
+                  {d.jobDescriptions.map((j) => (
+                    <span key={j.nodeId} className={archivedClass(j.status)} data-node={j.nodeId}>
+                      <MenuButton items={() => actions.jobDescriptionMenu(j)}
+                        label={(j.title || "без названия")
+                          + (!j.duties ? " · нет списка обязанностей" : j.dutiesReviewed ? "" : " · проверьте обязанности")} />
+                    </span>
+                  ))}
+                  {canEdit
+                    ? <button className="btn sm ghost" onClick={actions.addJobDescription(d)}>+ Инструкция</button>
+                    : !d.jobDescriptions.length && <span className="dim">—</span>}
+                </div></td>
                 <td><div className="actions"><MenuButton items={() => actions.departmentMenu(d)} /></div></td>
               </tr>
             ))}

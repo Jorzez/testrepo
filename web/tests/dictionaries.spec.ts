@@ -1,4 +1,5 @@
 import {
+  check, choose,
   cell, expect, go, menu, modal, optionsOf, orderItem, panel, PROJECT, ruleCard, test, toast, TRAINING,
 } from "./fixtures";
 import type { Page } from "@playwright/test";
@@ -35,6 +36,57 @@ test("подразделения: создание, двойник иденти�
   await go(app, "Правила");
   await expect(cell(app, TRAINING, "Служба персонала")).toHaveAttribute("data-state", "applies");
   await expect(cell(app, PROJECT, "Служба персонала")).toHaveAttribute("data-state", "off");
+});
+
+test("должностные инструкции: загрузка, правка и проверка цели по ним", async ({ app }) => {
+  const DUTY = "готовить ежемесячный отчёт по заявкам";
+  await go(app, "Подразделения");
+  await departmentRow(app, "UCT").getByRole("button", { name: "+ Инструкция" }).click();
+  await modal(app).getByLabel("Должность").fill("Аналитик");
+  await modal(app).getByLabel("Текст инструкции").fill(`${DUTY};\nвести реестр обращений`);
+  await modal(app).getByRole("button", { name: "Загрузить" }).click();
+  await expect(toast(app, "Инструкция загружена")).toBeVisible();
+
+  // Сразу после загрузки редактор сверяет список обязанностей, выписанный моделью.
+  await expect(modal(app).getByLabel("Обязанности")).toHaveValue(`${DUTY}\nвести реестр обращений`);
+  await expect(departmentRow(app, "UCT").getByRole("button", { name: /Аналитик · проверьте обязанности/ })).toBeVisible();
+  await modal(app).getByRole("button", { name: "Подтвердить список" }).click();
+  await expect(toast(app, "Список обязанностей сохранён")).toBeVisible();
+
+  // Правка открывает сохранённый текст, хотя в списке подразделений его нет.
+  await departmentRow(app, "UCT").getByRole("button", { name: "Аналитик", exact: true }).click();
+  await app.getByRole("menuitem", { name: "Изменить текст" }).click();
+  await expect(modal(app).getByLabel("Текст инструкции")).toHaveValue(/вести реестр обращений/);
+  await modal(app).getByLabel("Должность").fill("Ведущий аналитик");
+  await modal(app).getByRole("button", { name: "Сохранить" }).click();
+  await expect(departmentRow(app, "UCT").getByRole("button", { name: "Ведущий аналитик", exact: true })).toBeVisible();
+
+  // Атрибут определяется по инструкциям; правило на нём — обычный запрет.
+  await go(app, "Атрибуты");
+  await app.locator("#tab-targets").getByRole("button", { name: "+ Атрибут" }).click();
+  await modal(app).getByLabel("Имя").fill("дублирование_обязанностей");
+  await modal(app).getByLabel("Описание для модели").fill("цель повторяет обязанность из инструкции");
+  await choose(modal(app).locator("#f_source"), { value: "job_descriptions" });
+  await modal(app).getByRole("button", { name: "Создать" }).click();
+  await expect(targetRow(app, "дублирование_обязанностей")).toContainText("по должностным инструкциям");
+  await app.evaluate(() => fetch("/api/catalog/rules", {
+    method: "POST", headers: { "Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest" },
+    body: JSON.stringify({ clauseNodeId: "c:2", type: "PROHIBITION", checkInstruction: "",
+      description: "Цель не должна дублировать должностные обязанности", targets: ["дублирование_обязанностей"] }),
+  }));
+  await app.getByRole("button", { name: "Обновить" }).click();
+
+  let result = await check(app, `В рамках проекта «Альфа» ${DUTY} до 31.12.2025`, "UCT");
+  await expect(result.locator(".violation")).toContainText("Цель не должна дублировать должностные обязанности");
+  await expect(result.locator(".violation")).toContainText(`Совпадает с обязанностью (Ведущий аналитик): «${DUTY}»`);
+
+  result = await check(app, "В рамках проекта «Альфа» сократить срок обработки заявок до 31.12.2025", "UCT");
+  await expect(result.getByText("Нарушений нет")).toBeVisible();
+
+  // В подразделении без инструкций сравнить не с чем — цель не разрешается.
+  result = await check(app, "Сократить срок обработки заявок до 31.12.2025", "FIN");
+  await expect(result.getByText("Требуется ручная проверка")).toBeVisible();
+  await expect(result.getByText(/Цель не сравнивалась с должностными инструкциями/)).toBeVisible();
 });
 
 test("подразделение, задающее область действия правил, удалить нельзя", async ({ app }) => {

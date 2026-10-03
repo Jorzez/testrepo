@@ -6,18 +6,28 @@
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+import agent
 import auth
 import catalog
 import diagnostics
+import metrics
 import schemas
 
 log = logging.getLogger(__name__)
 
 # Читать каталог может любой вошедший пользователь; менять — редактор;
 # необратимое (физическое удаление, массовый ремонт) — только администратор.
-router = APIRouter(prefix="/catalog", tags=["catalog"], dependencies=[Depends(auth.viewer)])
+def _catalog_changed(request: Request):
+    """После любой правки каталога готовые ответы проверок устаревают."""
+    yield
+    if request.method != "GET":
+        metrics.catalog_changed()
+
+
+router = APIRouter(prefix="/catalog", tags=["catalog"],
+                   dependencies=[Depends(auth.viewer), Depends(_catalog_changed)])
 EDITOR = [Depends(auth.editor)]
 ADMIN = [Depends(auth.admin)]
 
@@ -56,6 +66,12 @@ def get_clauses_flat():
 def get_departments(include_archived: bool = Query(False)):
     """Подразделения и правила, чью область действия они задают."""
     return {"departments": _handle(catalog.list_departments, include_archived)}
+
+
+@router.get("/graph")
+def get_graph():
+    """Узлы и связи каталога — для визуального графа."""
+    return _handle(catalog.graph_view)
 
 
 @router.get("/diagnostics")
@@ -132,12 +148,58 @@ def post_example(body: schemas.ExampleCreate):
 
 @router.post("/check-targets", status_code=201, dependencies=EDITOR)
 def post_check_target(body: schemas.CheckTargetCreate):
-    return _handle(catalog.create_check_target, body.name, body.description)
+    return _handle(catalog.create_check_target, body.name, body.description, body.source)
 
 
 @router.post("/departments", status_code=201, dependencies=EDITOR)
 def post_department(body: schemas.DepartmentCreate):
     return _handle(catalog.create_department, body.departmentId, body.name)
+
+
+@router.post("/job-descriptions", status_code=201, dependencies=EDITOR)
+def post_job_description(body: schemas.JobDescriptionCreate):
+    """Должностная инструкция подразделения: с ней сравнивается цель.
+
+    Сразу после загрузки модель выписывает из текста список обязанностей.
+    """
+    return _extract_duties(_handle(catalog.create_job_description, body.departmentNodeId,
+                                   body.title, body.text, body.jobDescriptionId))
+
+
+def _extract_duties(node: dict) -> dict:
+    """Выписывает обязанности из текста инструкции и сохраняет их непроверенными.
+
+    Сбой модели инструкцию не теряет: она остаётся без списка, проверка идёт
+    по полному тексту, а причина возвращается в dutiesError.
+    """
+    try:
+        duties = agent.extract_duties(node.get("text") or "")
+    except agent.ExtractionError as exc:
+        log.warning("Обязанности из инструкции %s не извлечены: %s", node["nodeId"], exc)
+        return {**node, "dutiesError": str(exc)}
+    return {**_handle(catalog.set_job_duties, node["nodeId"], duties, False), "dutiesError": None}
+
+
+@router.put("/job-descriptions/{node_id}", dependencies=EDITOR)
+def put_job_description(node_id: str, body: schemas.JobDescriptionUpdate):
+    """Правка должности и текста; при новом тексте обязанности выписываются заново."""
+    node, changed = _handle(catalog.update_job_description, node_id, body.title, body.text)
+    return _extract_duties(node) if changed else {**node, "dutiesError": None}
+
+
+@router.post("/job-descriptions/{node_id}/extract-duties", dependencies=EDITOR)
+def post_extract_duties(node_id: str):
+    """Выписать обязанности из текста заново (например, после сбоя модели)."""
+    node = _handle(catalog.get_node, node_id)
+    if "JobDescription" not in node["labels"]:
+        raise HTTPException(status_code=409, detail="Это не должностная инструкция")
+    return _extract_duties(node)
+
+
+@router.put("/job-descriptions/{node_id}/duties", dependencies=EDITOR)
+def put_job_duties(node_id: str, body: schemas.JobDuties):
+    """Список обязанностей, проверенный и поправленный редактором."""
+    return _handle(catalog.set_job_duties, node_id, body.duties, True)
 
 
 # -------------------------------- связи -------------------------------------

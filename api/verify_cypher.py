@@ -27,7 +27,7 @@ import sys
 from pathlib import Path
 from typing import Any, Iterator
 
-MODULES = ("graph", "catalog", "diagnostics", "users")
+MODULES = ("graph", "catalog", "diagnostics", "users", "history")
 
 CYPHER_MARKER = re.compile(r"\b(MATCH|MERGE|CREATE\s+(CONSTRAINT|INDEX|FULLTEXT)|UNWIND)\b")
 

@@ -12,7 +12,7 @@ import { useActions } from "../actions";
 /* Приказ читается как документ: пункт, под ним правила простыми словами.
    Слева — список приказов, клик по правилу открывает его панель. */
 
-export function OrdersView({ hidden }: { hidden: boolean }) {
+export function OrdersView() {
   const { orders, showArchived, reload, selectedOrder, selectOrder } = useCatalog();
   const actions = useActions();
   const { canEdit } = useAuth();
@@ -24,7 +24,7 @@ export function OrdersView({ hidden }: { hidden: boolean }) {
   const order = visible.find((o) => o.nodeId === selectedOrder) ?? visible[0];
 
   return (
-    <section id="tab-orders" className={hidden ? "hidden" : ""}>
+    <section id="tab-orders">
       <div className="orders">
         <div>
           <input type="search" className="pill" placeholder="Поиск по приказам…" value={search}

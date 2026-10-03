@@ -196,3 +196,28 @@ def test_plain_scope_raises_no_issues(db):
     db.rows[diagnostics.Q_RULE_SCOPE] = [
         _scope(kind="ONLY_IN"), _scope(rule="R-2.4", status="active", basis="ПР-01 п. 2.5")]
     assert diagnostics.collect()["issues"] == []
+
+
+def test_warns_about_departments_without_job_descriptions(db):
+    _healthy(db)
+    db.rows[diagnostics.Q_DEPARTMENTS_WITHOUT_JOB_DESCRIPTIONS] = [{"nodeId": "4:db:9", "label": "УЦТ"}]
+    db.rows[diagnostics.Q_JOB_RULES] = [{"rule": "R-3.5"}]
+    report = diagnostics.collect()
+    issue = next(i for i in report["issues"] if i["code"] == "departments_without_job_descriptions")
+    assert issue["severity"] == "warning" and "R-3.5" in issue["detail"]
+    assert issue["items"] == [{"label": "УЦТ", "nodeId": "4:db:9", "kind": "Department"}]
+    assert report["ready"] is True
+
+
+def test_reports_job_descriptions_without_or_with_unreviewed_duties(db):
+    _healthy(db)
+    db.rows[diagnostics.Q_JOB_DUTIES] = [
+        {"nodeId": "4:db:9", "label": "УЦТ — Аналитик", "duties": 0},
+        {"nodeId": "4:db:9", "label": "УЦТ — Руководитель", "duties": 12},
+    ]
+    report = diagnostics.collect()
+    by_code = {i["code"]: i for i in report["issues"]}
+    assert by_code["job_descriptions_without_duties"]["severity"] == "warning"
+    assert by_code["job_descriptions_without_duties"]["items"][0]["label"] == "УЦТ — Аналитик"
+    assert by_code["job_duties_unreviewed"]["severity"] == "info"
+    assert report["ready"] is True

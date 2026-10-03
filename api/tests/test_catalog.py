@@ -400,3 +400,90 @@ def test_fetch_node_checks_label(db):
     with pytest.raises(Conflict) as exc:
         catalog.create_clause(CLAUSE_NODE, "1.2", "текст")
     assert "Ожидался узел :Order" in str(exc.value)
+
+
+# ------------------------- должностные инструкции ---------------------------
+
+
+def test_departments_list_carries_job_descriptions(db):
+    db.rows[catalog.Q_DEPARTMENTS] = [
+        {"nodeId": DEPARTMENT_NODE, "props": {"departmentId": "UCT", "name": "УЦТ"}}]
+    db.rows[catalog.Q_JOB_DESCRIPTIONS] = [
+        {"parent": DEPARTMENT_NODE, "nodeId": "4:db:20", "jobDescriptionId": "UCT/аналитик",
+         "title": "Аналитик", "status": "active", "chars": 1200, "duties": 12, "dutiesReviewed": True},
+        {"parent": DEPARTMENT_NODE, "nodeId": "4:db:21", "jobDescriptionId": "UCT/old",
+         "title": "Старая", "status": "archived", "chars": 10},
+    ]
+    assert catalog.list_departments()[0]["jobDescriptions"] == [
+        {"nodeId": "4:db:20", "jobDescriptionId": "UCT/аналитик", "title": "Аналитик",
+         "status": "active", "chars": 1200, "duties": 12, "dutiesReviewed": True}]
+    assert len(catalog.list_departments(include_archived=True)[0]["jobDescriptions"]) == 2
+
+
+def test_create_job_description_builds_id_from_department_and_title(db):
+    _exists(db, DEPARTMENT_NODE, ["Department"], departmentId="UCT", name="УЦТ")
+    db.rows[catalog.Q_CREATE_JOB_DESCRIPTION] = [{"nodeId": "4:db:20", "props": {"title": "Ведущий аналитик"}}]
+    created = catalog.create_job_description(DEPARTMENT_NODE, " Ведущий аналитик ", " текст ")
+    assert created["nodeId"] == "4:db:20"
+    params = db.calls[-1][1]
+    assert params["id"] == "UCT/ведущий_аналитик"
+    assert (params["title"], params["text"]) == ("Ведущий аналитик", "текст")
+
+
+def test_create_job_description_requires_department(db):
+    _exists(db, RULE_NODE, ["Rule"], ruleId="R-1.1")
+    with pytest.raises(Conflict):
+        catalog.create_job_description(RULE_NODE, "Аналитик", "текст")
+
+
+def test_job_description_is_a_catalog_node(db):
+    """Правка и архив инструкции идут через общие операции над узлом."""
+    _exists(db, "4:db:20", ["JobDescription"], jobDescriptionId="UCT/a", title="Аналитик")
+    assert catalog.get_node("4:db:20")["title"] == "Аналитик"
+    with pytest.raises(Conflict):
+        catalog.delete_node("4:db:20")
+
+
+def test_create_target_rejects_unknown_source(db):
+    with pytest.raises(Conflict):
+        catalog.create_check_target("атрибут", "описание", "employees")
+
+
+def test_graph_view_uses_catalog_labels_and_trims_text(db):
+    db.rows[catalog.Q_GRAPH_NODES] = [
+        {"id": "1", "labels": ["Rule"], "props": {"ruleId": "R-1.1", "type": "PROHIBITION",
+                                                  "description": "о" * 500}},
+        {"id": "2", "labels": ["JobDescription"], "props": {"title": "Аналитик", "text": "секрет",
+                                                            "jobDescriptionId": "UCT/a", "status": "archived"}},
+    ]
+    db.rows[catalog.Q_GRAPH_EDGES] = [{"source": "1", "target": "2", "type": "X", "status": None}]
+    view = catalog.graph_view()
+    assert view["nodes"][0] == {"id": "1", "label": "Rule", "title": "R-1.1", "detail": "о" * 300,
+                                "status": "active", "type": "PROHIBITION"}
+    assert view["nodes"][1] == {"id": "2", "label": "JobDescription", "title": "Аналитик",
+                                "detail": "UCT/a", "status": "archived"}
+    assert "User" not in db.calls[0][1]["labels"] and "CheckRecord" not in db.calls[0][1]["labels"]
+    assert view["edges"] == db.rows[catalog.Q_GRAPH_EDGES]
+
+
+def test_job_text_and_duties_are_not_editable_as_plain_properties(db):
+    _exists(db, "4:db:20", ["JobDescription"], jobDescriptionId="UCT/a", title="Аналитик")
+    for name in ("text", "duties", "dutiesReviewed"):
+        with pytest.raises(Conflict):
+            catalog.update_properties("4:db:20", {name: "x"})
+
+
+def test_changed_text_resets_duties(db):
+    _exists(db, "4:db:20", ["JobDescription"], jobDescriptionId="UCT/a", title="Аналитик", text="старый")
+    _, changed = catalog.update_job_description("4:db:20", "Аналитик", " новый ")
+    assert changed is True
+    assert db.calls[-2][1] == {"node_id": "4:db:20", "title": "Аналитик", "text": "новый", "changed": True}
+    _, changed = catalog.update_job_description("4:db:20", "Ведущий аналитик", "старый")
+    assert changed is False
+
+
+def test_set_job_duties_cleans_list(db):
+    _exists(db, "4:db:20", ["JobDescription"], jobDescriptionId="UCT/a")
+    catalog.set_job_duties("4:db:20", ["  Готовит   отчёт ", "", "Готовит отчёт", "Ведёт реестр"], True)
+    assert db.calls[-2][1]["duties"] == ["Готовит отчёт", "Ведёт реестр"]
+    assert db.calls[-2][1]["reviewed"] is True

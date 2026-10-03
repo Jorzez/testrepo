@@ -51,12 +51,38 @@ class ExampleCreate(BaseModel):
 class CheckTargetCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     description: str = Field("", max_length=4000)
+    source: Optional[Literal["job_descriptions"]] = Field(
+        None,
+        description="job_descriptions — атрибут определяется сравнением цели с должностными "
+                    "инструкциями подразделения; по умолчанию — по тексту цели",
+    )
 
 
 class DepartmentCreate(BaseModel):
     departmentId: str = Field(..., min_length=1, max_length=100,
                               description="Идентификатор, который передаётся в запросе проверки")
     name: str = Field(..., min_length=1, max_length=500)
+
+
+class JobDescriptionCreate(BaseModel):
+    """Должностная инструкция подразделения."""
+
+    departmentNodeId: str
+    title: str = Field(..., min_length=1, max_length=500, description="Должность")
+    text: str = Field(..., min_length=1, max_length=100_000,
+                      description="Текст инструкции; достаточно раздела с обязанностями")
+    jobDescriptionId: Optional[str] = None
+
+
+class JobDescriptionUpdate(BaseModel):
+    title: str = Field(..., min_length=1, max_length=500)
+    text: str = Field(..., min_length=1, max_length=100_000)
+
+
+class JobDuties(BaseModel):
+    """Список обязанностей, проверенный редактором."""
+
+    duties: list[str] = Field(..., max_length=300)
 
 
 class RuleTargets(BaseModel):

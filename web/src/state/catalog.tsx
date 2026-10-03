@@ -3,11 +3,14 @@ import {
 } from "react";
 
 import { api } from "../api/client";
-import type { CheckTarget, Department, Diagnostics, FlatClause, NodeKind, Order } from "../api/types";
+import type { CheckResult, CheckTarget, Department, Diagnostics, FlatClause, NodeKind, Order } from "../api/types";
 import { errorText, useToast } from "../ui/Toasts";
 import { findOrderOf, findRuleRef } from "./tree";
 
-export type Section = "check" | "rules" | "orders" | "departments" | "targets" | "health" | "users";
+export type Section = "check" | "rules" | "orders" | "departments" | "targets" | "graph" | "health"
+  | "monitoring" | "users" | "settings";
+export const SECTION_IDS: Section[] = ["check", "rules", "orders", "departments", "targets", "graph", "health",
+  "monitoring", "users", "settings"];
 export type ApiState = "connecting" | "online" | "offline";
 
 interface Data {
@@ -23,6 +26,21 @@ interface Flags {
   showArchivedDepartments: boolean;
 }
 
+/** Раздел — это адрес страницы: /rules, /monitoring… Корень сайта — «Проверка цели». */
+export const sectionPath = (section: Section) => "/" + section;
+const sectionOf = (pathname: string): Section | null => {
+  const id = pathname.replace(/^\/+|\/+$/g, "");
+  if (!id) return "check";
+  return SECTION_IDS.find((s) => s === id) ?? null;
+};
+
+/** Форма «Проверки цели»: живёт здесь, чтобы пережить уход на другую страницу. */
+export interface CheckForm {
+  goal: string;
+  departmentId: string;
+  result: CheckResult | null;
+}
+
 /** С чего начать мастер нового правила. */
 export interface WizardPreset {
   orderNodeId?: string;
@@ -34,6 +52,8 @@ interface CatalogState extends Data, Flags {
   health: Diagnostics["counts"] | null;
   section: Section;
   setSection: (section: Section) => void;
+  checkForm: CheckForm;
+  setCheckForm: (patch: Partial<CheckForm>) => void;
   /** Перечитать данные; флаги архива можно поменять тем же вызовом. */
   reload: (flags?: Partial<Flags>) => Promise<Data | null>;
   /** Выполнить изменение, показать сообщение и перечитать данные. */
@@ -50,6 +70,9 @@ interface CatalogState extends Data, Flags {
   openWizard: (preset?: WizardPreset) => void;
   closeWizard: () => void;
   goToNode: (nodeId: string, kind?: NodeKind) => Promise<void>;
+  /** Результат проверки, путь которой показан на графе. */
+  trace: CheckResult | null;
+  setTrace: (result: CheckResult | null) => void;
 }
 
 const Context = createContext<CatalogState | null>(null);
@@ -69,10 +92,12 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
   const flagsRef = useRef(flags);
   const [apiState, setApiState] = useState<ApiState>("connecting");
   const [health, setHealth] = useState<Diagnostics["counts"] | null>(null);
-  const [section, setSectionState] = useState<Section>("check");
+  const [section, setSectionState] = useState<Section>(() => sectionOf(location.pathname) ?? "check");
+  const [checkForm, setCheckFormState] = useState<CheckForm>({ goal: "", departmentId: "", result: null });
   const [selectedOrder, setSelectedOrder] = useState<string | null>(null);
   const [panelRule, setPanelRule] = useState<string | null>(null);
   const [wizard, setWizard] = useState<WizardPreset | null>(null);
+  const [trace, setTrace] = useState<CheckResult | null>(null);
   const [flashTarget, setFlashTarget] = useState<{ id: string; seq: number } | null>(null);
 
   const refreshHealth = useCallback(async () => {
@@ -112,11 +137,28 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
   useEffect(() => { void reload(); }, [reload]);
 
   // Панель правила и мастер живут только в «Правилах» и «Приказах».
-  const setSection = useCallback((next: Section) => {
+  const showSection = useCallback((next: Section) => {
     setSectionState(next);
     setWizard(null);
     if (next !== "rules" && next !== "orders") setPanelRule(null);
   }, []);
+
+  const setSection = useCallback((next: Section) => {
+    if (location.pathname !== sectionPath(next)) history.pushState(null, "", sectionPath(next));
+    showSection(next);
+  }, [showSection]);
+
+  // Адрес — источник правды: «Назад» и «Вперёд» браузера переключают раздел,
+  // а неизвестный адрес заменяется адресом показанного раздела.
+  useEffect(() => {
+    if (sectionOf(location.pathname) === null) history.replaceState(null, "", sectionPath("check"));
+    const onPop = () => showSection(sectionOf(location.pathname) ?? "check");
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [showSection]);
+
+  const setCheckForm = useCallback(
+    (patch: Partial<CheckForm>) => setCheckFormState((prev) => ({ ...prev, ...patch })), []);
 
   const goToNode = useCallback(async (nodeId: string, kind?: NodeKind) => {
     const flash = () => setFlashTarget({ id: nodeId, seq: Date.now() });
@@ -145,7 +187,6 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
   // Подсветка — после того как React отрисовал нужный раздел.
   useEffect(() => {
     if (!flashTarget) return;
-    // Узел может быть отрисован и в скрытом разделе — подсвечиваем видимый.
     const el = [...document.querySelectorAll<HTMLElement>(`[data-node="${CSS.escape(flashTarget.id)}"]`)]
       .find((node) => node.offsetParent !== null);
     setFlashTarget(null);
@@ -157,15 +198,16 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
   }, [flashTarget, toast]);
 
   const value = useMemo<CatalogState>(() => ({
-    ...data, ...flags, apiState, health, section, setSection, reload, mutate, refreshHealth,
+    ...data, ...flags, apiState, health, section, setSection, checkForm, setCheckForm,
+    reload, mutate, refreshHealth,
     selectedOrder, selectOrder: setSelectedOrder,
     panelRule, openRule: setPanelRule, closeRule: () => setPanelRule(null),
     wizard,
-    openWizard: (preset) => { setSectionState("rules"); setPanelRule(null); setWizard(preset ?? {}); },
+    openWizard: (preset) => { setSection("rules"); setPanelRule(null); setWizard(preset ?? {}); },
     closeWizard: () => setWizard(null),
-    goToNode,
-  }), [data, flags, apiState, health, section, setSection, reload, mutate, refreshHealth,
-    selectedOrder, panelRule, wizard, goToNode]);
+    goToNode, trace, setTrace,
+  }), [trace, data, flags, apiState, health, section, setSection, checkForm, setCheckForm,
+    reload, mutate, refreshHealth, selectedOrder, panelRule, wizard, goToNode]);
 
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }

@@ -265,3 +265,144 @@ def test_rule_scope_rejects_unknown_exception_status(client):
     response = client.put("/catalog/rules/4:db:3/departments",
                           json={"exceptions": [{"departmentId": "FIN", "status": "approved"}]})
     assert response.status_code == 422
+
+
+# ------------------------------ мониторинг ----------------------------------
+
+
+def test_monitoring_now(client, monkeypatch):
+    import monitoring
+    monkeypatch.setattr(monitoring, "vllm_state", lambda: {"running": 3.0, "waiting": 0.0})
+    body = client.get("/monitoring/now").json()
+    assert body["llm"]["running"] == 0 and body["llm"]["capacity"] >= 1
+    assert body["vllm"] == {"running": 3.0, "waiting": 0.0}
+    assert set(body) >= {"checks", "recent", "cache", "history", "neo4j"}
+
+
+def test_monitoring_stats_passes_period_and_step(client, monkeypatch):
+    import history
+    seen = {}
+    monkeypatch.setattr(history, "_run", lambda q, **p: seen.setdefault("calls", []).append((q, p)) or [])
+    response = client.get("/monitoring/stats", params={
+        "start": "2026-10-01T00:00:00Z", "end": "2026-10-02T00:00:00Z", "step": "hour",
+        "timezone": "Europe/Moscow", "mode": "bulk"})
+    assert response.status_code == 200 and response.json()["buckets"] == []
+    query, params = seen["calls"][0]
+    assert "datetime.truncate('hour'" in query
+    assert params == {"start": "2026-10-01T00:00:00Z", "end": "2026-10-02T00:00:00Z",
+                      "status": None, "mode": "bulk", "timezone": "Europe/Moscow"}
+
+
+@pytest.mark.parametrize("params", [
+    {"step": "second"}, {"timezone": "x'}) DETACH DELETE n //"}, {"status": "OK"}, {"mode": "all"},
+])
+def test_monitoring_stats_rejects_bad_parameters(client, params):
+    response = client.get("/monitoring/stats", params={
+        "start": "2026-10-01T00:00:00Z", "end": "2026-10-02T00:00:00Z", **params})
+    assert response.status_code == 422
+
+
+def test_monitoring_is_admin_only(client):
+    main.app.dependency_overrides[auth.current_user] = lambda: auth.Principal("editor", "editor")
+    for path in ("/monitoring/now", "/monitoring/history?start=a&end=b", "/monitoring/stats?start=a&end=b"):
+        assert client.get(path).status_code == 403
+
+
+def test_vllm_metrics_parser():
+    import monitoring
+    text = ('# HELP vllm:num_requests_running ...\n'
+            'vllm:num_requests_running{model_name="Qwen"} 7.0\n'
+            'vllm:num_requests_waiting{model_name="Qwen"} 2.0\n'
+            'vllm:gpu_cache_usage_perc{model_name="Qwen"} 0.25\n')
+    assert monitoring.parse_vllm_metrics(text) == {"running": 7.0, "waiting": 2.0, "kv_cache_usage": 0.25}
+
+
+def test_graph_is_readable_by_viewer_and_catalog_change_drops_cache(client, monkeypatch):
+    import metrics
+    monkeypatch.setattr(catalog, "graph_view", lambda: {"nodes": [], "edges": []})
+    monkeypatch.setattr(catalog, "create_department", lambda department_id, name: {"nodeId": "1"})
+    main.app.dependency_overrides[auth.current_user] = lambda: auth.Principal("viewer", "viewer")
+    assert client.get("/catalog/graph").json() == {"nodes": [], "edges": []}
+
+    main.app.dependency_overrides[auth.current_user] = lambda: auth.Principal("editor", "editor")
+    generation = metrics.results.generation
+    client.get("/catalog/graph")
+    assert metrics.results.generation == generation, "чтение кэш не сбрасывает"
+    client.post("/catalog/departments", json={"departmentId": "HR", "name": "Кадры"})
+    assert metrics.results.generation == generation + 1
+
+
+# ------------------------- обязанности из инструкции -------------------------
+
+JOB_NODE = {"nodeId": "4:db:20", "labels": ["JobDescription"], "title": "Аналитик", "text": "текст"}
+
+
+def test_uploading_job_description_extracts_duties(client, monkeypatch):
+    import agent
+    saved = {}
+    monkeypatch.setattr(catalog, "create_job_description", lambda *a: dict(JOB_NODE))
+    monkeypatch.setattr(agent, "extract_duties", lambda text: ["Готовит отчёт"])
+    monkeypatch.setattr(catalog, "set_job_duties",
+                        lambda node_id, duties, reviewed: saved.update(duties=duties, reviewed=reviewed) or
+                        {**JOB_NODE, "duties": duties})
+    response = client.post("/catalog/job-descriptions",
+                           json={"departmentNodeId": "4:db:9", "title": "Аналитик", "text": "текст"})
+    assert response.status_code == 201
+    assert response.json()["duties"] == ["Готовит отчёт"] and response.json()["dutiesError"] is None
+    assert saved == {"duties": ["Готовит отчёт"], "reviewed": False}, "список модели ждёт проверки редактором"
+
+
+def test_model_failure_does_not_lose_uploaded_job_description(client, monkeypatch):
+    import agent
+
+    def boom(text):
+        raise agent.ExtractionError("модель недоступна: timeout")
+
+    monkeypatch.setattr(catalog, "create_job_description", lambda *a: dict(JOB_NODE))
+    monkeypatch.setattr(agent, "extract_duties", boom)
+    response = client.post("/catalog/job-descriptions",
+                           json={"departmentNodeId": "4:db:9", "title": "Аналитик", "text": "текст"})
+    assert response.status_code == 201 and "модель недоступна" in response.json()["dutiesError"]
+
+
+def test_job_description_edit_reextracts_only_when_text_changed(client, monkeypatch):
+    import agent
+    calls = []
+    monkeypatch.setattr(agent, "extract_duties", lambda text: calls.append(text) or [])
+    monkeypatch.setattr(catalog, "set_job_duties", lambda node_id, duties, reviewed: dict(JOB_NODE))
+    monkeypatch.setattr(catalog, "update_job_description", lambda n, title, text: (dict(JOB_NODE), False))
+    client.put("/catalog/job-descriptions/4:db:20", json={"title": "Аналитик", "text": "текст"})
+    assert calls == []
+    monkeypatch.setattr(catalog, "update_job_description", lambda n, title, text: (dict(JOB_NODE), True))
+    client.put("/catalog/job-descriptions/4:db:20", json={"title": "Аналитик", "text": "новый"})
+    assert calls == ["текст"]
+
+
+def test_editor_saves_reviewed_duties(client, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(catalog, "set_job_duties",
+                        lambda node_id, duties, reviewed: seen.update(d=duties, r=reviewed) or JOB_NODE)
+    assert client.put("/catalog/job-descriptions/4:db:20/duties", json={"duties": ["А", "Б"]}).status_code == 200
+    assert seen == {"d": ["А", "Б"], "r": True}
+
+
+def test_monitoring_history_is_paged(client, monkeypatch):
+    import history
+    calls = []
+
+    def run(query, **params):
+        calls.append((query, params))
+        return [{"total": 4200}] if query == history.Q_COUNT else [{"goal": "цель"}]
+
+    monkeypatch.setattr(history, "_run", run)
+    body = client.get("/monitoring/history", params={
+        "start": "2026-10-01T00:00:00Z", "end": "2026-10-02T00:00:00Z", "limit": 50, "offset": 500}).json()
+    assert body == {"records": [{"goal": "цель"}], "total": 4200}
+    assert (calls[0][1]["limit"], calls[0][1]["offset"]) == (50, 500)
+
+
+@pytest.mark.parametrize("params", [{"limit": 101}, {"limit": 0}, {"offset": -1}])
+def test_monitoring_history_page_limits(client, params):
+    response = client.get("/monitoring/history", params={
+        "start": "2026-10-01T00:00:00Z", "end": "2026-10-02T00:00:00Z", **params})
+    assert response.status_code == 422

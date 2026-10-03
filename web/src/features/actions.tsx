@@ -1,5 +1,7 @@
-import { api } from "../api/client";
-import type { CheckTarget, Clause, Department, Example, Order, Rule, Status } from "../api/types";
+import { api, type JobDescriptionNode } from "../api/client";
+import type {
+  CheckTarget, Clause, Department, Example, JobDescriptionRef, Order, Rule, Status, TargetSource,
+} from "../api/types";
 import { useAuth } from "../state/auth";
 import { useCatalog } from "../state/catalog";
 import { findOrderOf } from "../state/tree";
@@ -16,6 +18,16 @@ const RULE_TYPE_OPTIONS: Option[] = [
   { value: "REQUIREMENT", label: "Требование — нарушено, если атрибута НЕТ в цели" },
   { value: "PROHIBITION", label: "Запрет — нарушен, если атрибут ЕСТЬ в цели" },
 ];
+
+const SOURCE_OPTIONS: Option[] = [
+  { value: "", label: "По тексту цели" },
+  { value: "job_descriptions", label: "Сравнением цели с должностными инструкциями подразделения" },
+];
+const SOURCE_HINT = "При сравнении с инструкциями описание служит критерием: что именно считать совпадением.";
+const JOB_TEXT_HINT = "После сохранения модель выпишет из текста список обязанностей — с ним и "
+  + "сравнивается цель. Это занимает несколько секунд.";
+const DUTIES_HINT = "По одной обязанности в строке. Цель сравнивается именно с этим списком: "
+  + "пропущенная обязанность — это пропущенное нарушение.";
 
 const str = (v: unknown) => (v as string) ?? "";
 
@@ -276,9 +288,12 @@ export function useActions() {
       { name: "description", label: "Описание для модели", type: "textarea", required: true,
         placeholder: "в цели указан проверяемый срок: конкретная дата, месяц, квартал или год",
         hint: "Это перечисление признаков, по которым модель решает, есть атрибут в цели или нет." },
+      { name: "source", label: "Как определяется", type: "select", value: "", options: SOURCE_OPTIONS,
+        hint: SOURCE_HINT },
     ],
-    onSubmit: (v) => mutate(() => api.createTarget({ name: str(v.name), description: str(v.description) }),
-      "Атрибут создан"),
+    onSubmit: (v) => mutate(() => api.createTarget({
+      name: str(v.name), description: str(v.description), source: (str(v.source) || null) as TargetSource | null,
+    }), "Атрибут создан"),
   });
 
   const editTarget = (t: CheckTarget) => () => openForm({
@@ -287,8 +302,10 @@ export function useActions() {
       { name: "name", label: "Имя", value: t.name, required: true,
         hint: "Переименование не меняет привязку правил: связь идёт по узлу." },
       { name: "description", label: "Описание для модели", type: "textarea", value: t.description, required: true },
+      { name: "source", label: "Как определяется", type: "select", value: t.source ?? "", options: SOURCE_OPTIONS,
+        hint: SOURCE_HINT },
     ],
-    onSubmit: (v) => mutate(() => api.patch(t.nodeId, v), "Атрибут обновлён"),
+    onSubmit: (v) => mutate(() => api.patch(t.nodeId, { ...v, source: str(v.source) || null }), "Атрибут обновлён"),
   });
 
   const targetMenu = (t: CheckTarget): MenuItem[] => [
@@ -321,8 +338,84 @@ export function useActions() {
     onSubmit: (v) => mutate(() => api.patch(d.nodeId, v), "Подразделение обновлено"),
   });
 
+  // С инструкциями сравнивается цель, если правило стоит на атрибуте,
+  // который определяется по должностным инструкциям.
+  const addJobDescription = (d: Department) => () => openForm({
+    title: "Должностная инструкция — " + (d.name || d.departmentId || ""), submitLabel: "Загрузить", wide: true,
+    fields: [
+      { name: "title", label: "Должность", required: true, placeholder: "Ведущий аналитик" },
+      { name: "text", label: "Текст инструкции", type: "textarea", required: true, hint: JOB_TEXT_HINT },
+    ],
+    onSubmit: async (v) => {
+      let created!: JobDescriptionNode;
+      await mutate(async () => {
+        created = await api.createJobDescription({ departmentNodeId: d.nodeId, title: str(v.title), text: str(v.text) });
+      }, "Инструкция загружена");
+      afterExtraction(created);
+    },
+  });
+
+  /** Список обязанностей: редактор сверяет то, что выписала модель. */
+  const openDuties = (nodeId: string, title: string, duties: string[]) => openForm({
+    title: "Обязанности — " + title, wide: true, submitLabel: "Подтвердить список",
+    fields: [{ name: "duties", label: "Обязанности", type: "textarea", value: duties.join("\n"), required: true,
+      hint: DUTIES_HINT }],
+    onSubmit: (v) => mutate(() => api.setJobDuties(nodeId, str(v.duties).split("\n")), "Список обязанностей сохранён"),
+  });
+
+  /** После загрузки или правки текста: показать выписанный список либо сказать, что его нет. */
+  const afterExtraction = (node: JobDescriptionNode) => {
+    if (node.dutiesError) {
+      toast("Обязанности не выписаны: " + node.dutiesError
+        + ". Пока цель сравнивается с полным текстом; повторите через меню инструкции.", "err");
+      return;
+    }
+    // Форма загрузки закрывается после onSubmit — список открывается следом.
+    setTimeout(() => openDuties(node.nodeId, str(node.title), node.duties ?? []), 0);
+  };
+
+  const editJobDescription = (j: JobDescriptionRef) => run(async () => {
+    // Текст в списке подразделений не приходит — читается по узлу.
+    const node = await api.node(j.nodeId);
+    openForm({
+      title: "Должностная инструкция", wide: true,
+      fields: [
+        { name: "title", label: "Должность", value: j.title, required: true },
+        { name: "text", label: "Текст инструкции", type: "textarea", value: str(node.text), required: true,
+          hint: "Если текст изменится, список обязанностей будет выписан заново." },
+      ],
+      onSubmit: async (v) => {
+        let updated!: JobDescriptionNode;
+        await mutate(async () => {
+          updated = await api.updateJobDescription(j.nodeId, { title: str(v.title), text: str(v.text) });
+        }, "Инструкция обновлена");
+        if (str(v.text) !== str(node.text).trim()) afterExtraction(updated);
+      },
+    });
+  });
+
+  const editDuties = (j: JobDescriptionRef) => run(async () => {
+    const node = await api.node(j.nodeId);
+    openDuties(j.nodeId, j.title, (node.duties as string[] | undefined) ?? []);
+  });
+
+  const extractDuties = (j: JobDescriptionRef) => run(async () => {
+    toast("Модель выписывает обязанности…", "ok");
+    let node!: JobDescriptionNode;
+    await mutate(async () => { node = await api.extractJobDuties(j.nodeId); });
+    afterExtraction(node);
+  });
+
+  const jobDescriptionMenu = (j: JobDescriptionRef): MenuItem[] => [
+    { label: "Изменить текст", run: editJobDescription(j) },
+    ...(j.duties ? [{ label: "Обязанности", run: editDuties(j) }] : []),
+    { label: j.duties ? "Выписать обязанности заново" : "Выписать обязанности", run: extractDuties(j) },
+    ...statusItems(j),
+  ];
+
   const departmentMenu = (d: Department): MenuItem[] => [
     { label: "Изменить", run: editDepartment(d) },
+    { label: "Добавить должностную инструкцию", run: addJobDescription(d) },
     { label: "Свойства", run: props(d.nodeId) },
     ...statusItems(d),
   ];
@@ -330,6 +423,6 @@ export function useActions() {
   return {
     addOrder, addTarget, addDepartment, addClause, addRule, addExample,
     editOrder, editRule, editTarget, orderMenu, clauseMenu, ruleMenu, targetMenu, departmentMenu, ruleTargets,
-    editExample, deleteExample, props, archive, restore,
+    editExample, deleteExample, props, archive, restore, addJobDescription, jobDescriptionMenu,
   };
 }

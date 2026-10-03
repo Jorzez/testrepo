@@ -86,3 +86,21 @@ test("без связи с сервером формы входа нет — т�
   await expect(page.getByText("Не удалось связаться с сервером")).toBeVisible();
   await expect(page.getByLabel("Пароль")).toHaveCount(0);
 });
+
+test("путь проверки показывается на графе", async ({ app }) => {
+  const result = await check(app, "Пройти обучение по охране труда до 31.12.2025", "AGD");
+  await result.getByRole("button", { name: "Показать на графе" }).click();
+
+  const graph = app.locator("#tab-graph");
+  await expect(graph.locator(".node.goal")).toBeVisible();
+  // Найденный атрибут, нарушенное правило с его пунктом и приказом, ненайденный обязательный атрибут.
+  await expect(graph.locator(".node.traced.ok")).toContainText(["срок_исполнения"]);
+  await expect(graph.locator(".node.traced.bad").filter({ hasText: "R-1.1" })).toBeVisible();
+  await expect(graph.locator(".node.traced.bad").filter({ hasText: "ПР-01" })).toBeVisible();
+  await expect(graph.locator(".edge.trace.missing")).toHaveCount(1);
+  await expect(graph.locator("aside")).toContainText("Нарушения: 2");
+
+  await graph.getByRole("button", { name: "Сбросить трассировку" }).click();
+  await expect(graph.locator(".node.goal")).toHaveCount(0);
+  await expect(graph.locator(".node.traced")).toHaveCount(0);
+});

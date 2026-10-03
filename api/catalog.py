@@ -16,7 +16,7 @@ import logging
 import re
 from typing import Any, Optional
 
-from graph import ACTIVE, get_driver
+from graph import ACTIVE, JOB_SOURCE, get_driver
 from naming import normalize_name
 
 log = logging.getLogger(__name__)
@@ -38,11 +38,19 @@ BUSINESS_KEYS = {
     "CheckTarget": "name",
     "ViolationExample": "exampleId",
     "Department": "departmentId",
+    "JobDescription": "jobDescriptionId",
 }
+# Чем определяется атрибут: по умолчанию — текстом цели, JOB_SOURCE —
+# сравнением цели с должностными инструкциями подразделения.
+TARGET_SOURCES = (JOB_SOURCE,)
 
 # Свойства, которые нельзя менять через редактор произвольных свойств:
 # для них есть отдельные операции с проверками.
 GUARDED_PROPERTIES = {"status"}
+# Текст инструкции и список обязанностей связаны: меняются своими операциями,
+# чтобы список не разошёлся с текстом.
+GUARDED_BY_LABEL = {"JobDescription": {"text", "duties", "dutiesReviewed"}}
+MAX_DUTIES = 300
 
 
 class CatalogError(RuntimeError):
@@ -174,6 +182,22 @@ RETURN elementId(d) AS parent, type(x) AS kind,
        coalesce(r.ruleId, '(без ruleId)') AS ruleId, x.status AS status
 ORDER BY ruleId
 """
+# Текст инструкции в список не отдаётся — только его длина: он большой,
+# а редактор читает его отдельно по nodeId.
+Q_JOB_DESCRIPTIONS = """
+MATCH (d:Department)-[:HAS_JOB_DESCRIPTION]->(j:JobDescription)
+RETURN elementId(d) AS parent, elementId(j) AS nodeId,
+       j.jobDescriptionId AS jobDescriptionId, coalesce(j.title, '') AS title,
+       coalesce(j.status, 'active') AS status, size(coalesce(j.text, '')) AS chars,
+       size(coalesce(j.duties, [])) AS duties, coalesce(j.dutiesReviewed, false) AS dutiesReviewed
+ORDER BY title
+"""
+Q_CREATE_JOB_DESCRIPTION = """
+MATCH (d:Department) WHERE elementId(d) = $department_node_id
+CREATE (j:JobDescription {jobDescriptionId: $id, title: $title, text: $text, status: $status})
+CREATE (d)-[:HAS_JOB_DESCRIPTION]->(j)
+RETURN elementId(j) AS nodeId, properties(j) AS props
+"""
 Q_TARGETS = """
 MATCH (t:CheckTarget)
 OPTIONAL MATCH (r:Rule)-[:APPLIES_TO]->(t)
@@ -284,8 +308,9 @@ def list_check_targets(include_archived: bool = False) -> list[dict[str, Any]]:
 
 
 def list_departments(include_archived: bool = False) -> list[dict[str, Any]]:
-    """Подразделения со списком правил, чью область действия они задают."""
+    """Подразделения: правила, чью область действия они задают, и должностные инструкции."""
     links = _group(_run(Q_DEPARTMENT_LINKS))
+    jobs = _group(_run(Q_JOB_DESCRIPTIONS))
     result = []
     for row in _run(Q_DEPARTMENTS):
         props = _props(row["props"])
@@ -300,9 +325,57 @@ def list_departments(include_archived: bool = False) -> list[dict[str, Any]]:
             "onlyRules": [l["ruleId"] for l in own if l["kind"] == "ONLY_IN"],
             "exceptRules": [{"ruleId": l["ruleId"], "status": l["status"]}
                             for l in own if l["kind"] == "EXCEPT_IN"],
+            "jobDescriptions": [
+                {k: j.get(k) for k in ("nodeId", "jobDescriptionId", "title", "status", "chars",
+                                       "duties", "dutiesReviewed")}
+                for j in jobs.get(row["nodeId"], []) if _keep(j, include_archived)
+            ],
         })
     result.sort(key=lambda d: str(d.get("departmentId") or ""))
     return result
+
+
+Q_GRAPH_NODES = """
+MATCH (n) WHERE any(l IN labels(n) WHERE l IN $labels)
+RETURN elementId(n) AS id, labels(n) AS labels, properties(n) AS props
+"""
+Q_GRAPH_EDGES = """
+MATCH (a)-[r]->(b)
+WHERE any(l IN labels(a) WHERE l IN $labels) AND any(l IN labels(b) WHERE l IN $labels)
+RETURN elementId(a) AS source, elementId(b) AS target, type(r) AS type, r.status AS status
+"""
+# Что показать на узле графа: (подпись, пояснение).
+GRAPH_CAPTIONS = {
+    "Order": ("number", "title"),
+    "Clause": ("code", "text"),
+    "Rule": ("ruleId", "description"),
+    "CheckTarget": ("name", "description"),
+    "ViolationExample": ("exampleId", "text"),
+    "Department": ("name", "departmentId"),
+    "JobDescription": ("title", "jobDescriptionId"),
+}
+
+
+def graph_view() -> dict[str, Any]:
+    """Весь каталог как граф: узлы с подписью и связи между ними.
+
+    Только метки каталога: пользователи и история проверок сюда не попадают.
+    Тексты узлов обрезаются — полный текст открывается в соответствующем разделе.
+    """
+    labels = list(BUSINESS_KEYS)
+    nodes = []
+    for row in _run(Q_GRAPH_NODES, labels=labels):
+        props = _props(row["props"])
+        label = next(l for l in row["labels"] if l in BUSINESS_KEYS)
+        title_key, detail_key = GRAPH_CAPTIONS[label]
+        nodes.append({
+            "id": row["id"], "label": label,
+            "title": str(props.get(title_key) or props.get(BUSINESS_KEYS[label]) or "?"),
+            "detail": str(props.get(detail_key) or "")[:300],
+            "status": _status_of(props),
+            **({"type": props["type"]} if label == "Rule" and props.get("type") else {}),
+        })
+    return {"nodes": nodes, "edges": _run(Q_GRAPH_EDGES, labels=labels)}
 
 
 def list_clauses_flat() -> list[dict[str, Any]]:
@@ -350,7 +423,7 @@ def update_properties(node_id: str, properties: dict[str, Any]) -> dict[str, Any
     business_key = BUSINESS_KEYS.get(label or "")
 
     for name in properties:
-        if name in GUARDED_PROPERTIES:
+        if name in GUARDED_PROPERTIES or name in GUARDED_BY_LABEL.get(label or "", ()):
             raise Conflict(
                 f"Свойство {name!r} меняется отдельной операцией, а не редактором свойств"
             )
@@ -425,6 +498,12 @@ def delete_node(node_id: str, cascade: bool = True, force: bool = False) -> dict
         _run("MATCH (n) WHERE elementId(n) = $node_id DETACH DELETE n", node_id=node_id)
         return {"deleted": node_id}
 
+    if "JobDescription" in labels:
+        if not force:
+            _assert_archived(node, "должностную инструкцию")
+        _run("MATCH (n) WHERE elementId(n) = $node_id DETACH DELETE n", node_id=node_id)
+        return {"deleted": node_id}
+
     if "Department" in labels:
         if not force:
             _assert_archived(node, "подразделение")
@@ -441,7 +520,15 @@ def delete_node(node_id: str, cascade: bool = True, force: bool = False) -> dict
                 + ", ".join(r["rule_id"] for r in used)
                 + ". Сначала уберите его из этих правил."
             )
-        _run("MATCH (n) WHERE elementId(n) = $node_id DETACH DELETE n", node_id=node_id)
+        # Инструкции без подразделения сравнивать не с чем — уходят вместе с ним.
+        _run(
+            """
+            MATCH (n) WHERE elementId(n) = $node_id
+            OPTIONAL MATCH (n)-[:HAS_JOB_DESCRIPTION]->(j:JobDescription)
+            DETACH DELETE j, n
+            """,
+            node_id=node_id,
+        )
         return {"deleted": node_id}
 
     if not force:
@@ -591,8 +678,15 @@ def create_example(rule_node_id: str, text: str, is_violation: bool,
     return {"nodeId": row["nodeId"], **_props(row["props"])}
 
 
-def create_check_target(name: str, description: str = "") -> dict[str, Any]:
-    """Заводит атрибут, не давая создать двойника по написанию."""
+def create_check_target(name: str, description: str = "",
+                        source: str | None = None) -> dict[str, Any]:
+    """Заводит атрибут, не давая создать двойника по написанию.
+
+    source = JOB_SOURCE — атрибут определяется сравнением цели с должностными
+    инструкциями подразделения, а description служит критерием сравнения.
+    """
+    if source and source not in TARGET_SOURCES:
+        raise Conflict(f"Недопустимый источник атрибута {source!r}, ожидался один из {TARGET_SOURCES}")
     normalized = normalize_name(name)
     for existing in _run("MATCH (t:CheckTarget) RETURN t.name AS name"):
         if existing["name"] and normalize_name(existing["name"]) == normalized:
@@ -603,9 +697,10 @@ def create_check_target(name: str, description: str = "") -> dict[str, Any]:
     row = _one(
         """
         CREATE (t:CheckTarget {name: $name, description: $description, status: $status})
+        SET t.source = $source
         RETURN elementId(t) AS nodeId, properties(t) AS props
         """,
-        name=name, description=description, status=ACTIVE_STATUS,
+        name=name, description=description, status=ACTIVE_STATUS, source=source or None,
     )
     log.info("Создан атрибут %s", name)
     return {"nodeId": row["nodeId"], **_props(row["props"])}
@@ -626,6 +721,78 @@ def create_department(department_id: str, name: str) -> dict[str, Any]:
     )
     log.info("Создано подразделение %s", department_id)
     return {"nodeId": row["nodeId"], **_props(row["props"])}
+
+
+def create_job_description(department_node_id: str, title: str, text: str,
+                           job_description_id: str | None = None) -> dict[str, Any]:
+    """Загружает должностную инструкцию в подразделение.
+
+    С её текстом сравнивается цель, когда в подразделении действует правило
+    на атрибуте с source = JOB_SOURCE.
+    """
+    department = _fetch_node(department_node_id, "Department")
+    title, text = title.strip(), text.strip()
+    taken = "MATCH (j:JobDescription {jobDescriptionId: $id}) RETURN j.jobDescriptionId AS id"
+    if job_description_id:
+        if _one(taken, id=job_description_id):
+            raise Conflict(f"Должностная инструкция с идентификатором {job_description_id!r} уже существует")
+    else:
+        base = (f"{department.get('departmentId') or slugify_id(department.get('name') or 'dep')}"
+                f"/{slugify_id(title)}")
+        job_description_id, suffix = base, 1
+        while _one(taken, id=job_description_id):
+            suffix += 1
+            job_description_id = f"{base}.{suffix}"
+
+    row = _one(
+        Q_CREATE_JOB_DESCRIPTION,
+        department_node_id=department_node_id, id=job_description_id,
+        title=title, text=text, status=ACTIVE_STATUS,
+    )
+    log.info("Загружена должностная инструкция %s (%d символов)", job_description_id, len(text))
+    return {"nodeId": row["nodeId"], **_props(row["props"])}
+
+
+def update_job_description(node_id: str, title: str, text: str) -> tuple[dict[str, Any], bool]:
+    """Правит должность и текст инструкции. Возвращает (узел, изменился ли текст).
+
+    С новым текстом прежний список обязанностей уже не сверен — он
+    сбрасывается; вызывающий извлекает его заново.
+    """
+    node = _fetch_node(node_id, "JobDescription")
+    title, text = title.strip(), text.strip()
+    changed = text != (node.get("text") or "").strip()
+    _run(
+        """
+        MATCH (j) WHERE elementId(j) = $node_id
+        SET j.title = $title, j.text = $text,
+            j.duties = CASE WHEN $changed THEN [] ELSE j.duties END,
+            j.dutiesReviewed = CASE WHEN $changed THEN false ELSE j.dutiesReviewed END
+        """,
+        node_id=node_id, title=title, text=text, changed=changed,
+    )
+    return _fetch_node(node_id), changed
+
+
+def set_job_duties(node_id: str, duties: list[str], reviewed: bool) -> dict[str, Any]:
+    """Сохраняет список обязанностей — с ним сравнивается цель.
+
+    reviewed = False — список выписала модель и редактор его ещё не смотрел.
+    """
+    _fetch_node(node_id, "JobDescription")
+    cleaned: list[str] = []
+    for item in duties:
+        duty = " ".join(str(item).split())
+        if duty and duty not in cleaned:
+            cleaned.append(duty)
+    if len(cleaned) > MAX_DUTIES:
+        raise Conflict(f"Слишком длинный список обязанностей: {len(cleaned)}, допустимо {MAX_DUTIES}")
+    _run(
+        "MATCH (j) WHERE elementId(j) = $node_id SET j.duties = $duties, j.dutiesReviewed = $reviewed",
+        node_id=node_id, duties=cleaned, reviewed=reviewed,
+    )
+    log.info("Инструкция %s: обязанностей %d, проверено редактором: %s", node_id, len(cleaned), reviewed)
+    return _fetch_node(node_id)
 
 
 # --------------------------------------------------------------------------
@@ -828,7 +995,7 @@ def repair_identifiers() -> dict[str, Any]:
 
     report["statuses"] = len(_run("""
         MATCH (n) WHERE (n:Order OR n:Clause OR n:Rule OR n:CheckTarget OR n:ViolationExample
-                         OR n:Department)
+                         OR n:Department OR n:JobDescription)
           AND n.status IS NULL
         SET n.status = 'active'
         RETURN elementId(n) AS id

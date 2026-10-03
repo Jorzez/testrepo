@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from graph import ACTIVE, get_driver
+from graph import ACTIVE, JOB_SOURCE, get_driver
 from naming import normalize_name
 
 log = logging.getLogger(__name__)
@@ -123,9 +123,49 @@ RETURN elementId(d) AS nodeId, coalesce(d.name, '(без названия)') AS 
 ORDER BY label
 """
 
+# Действующие правила на атрибутах, которые определяются по должностным
+# инструкциям: пока такие есть, каждому подразделению нужны инструкции.
+Q_JOB_RULES = f"""
+MATCH (r:Rule)-[:APPLIES_TO]->(t:CheckTarget {{source: '{JOB_SOURCE}'}})
+WHERE {ACTIVE.format('r')} AND {ACTIVE.format('t')}
+RETURN coalesce(r.ruleId, '(без ruleId)') AS rule
+ORDER BY rule
+"""
+
+# Правило на таком атрибуте подразделения касается, если оно не ограничено
+# другими подразделениями и не снято здесь утверждённым исключением.
+Q_DEPARTMENTS_WITHOUT_JOB_DESCRIPTIONS = f"""
+MATCH (d:Department)
+WHERE {ACTIVE.format('d')} AND d.departmentId IS NOT NULL
+  AND NOT EXISTS {{
+    MATCH (d)-[:HAS_JOB_DESCRIPTION]->(j:JobDescription)
+    WHERE {ACTIVE.format('j')} AND trim(coalesce(j.text, '')) <> ''
+  }}
+  AND EXISTS {{
+    MATCH (r:Rule)-[:APPLIES_TO]->(t:CheckTarget {{source: '{JOB_SOURCE}'}})
+    WHERE {ACTIVE.format('r')} AND {ACTIVE.format('t')}
+      AND (NOT (r)-[:ONLY_IN]->(:Department) OR (r)-[:ONLY_IN]->(d))
+      AND NOT (r)-[:EXCEPT_IN {{status: 'active'}}]->(d)
+  }}
+RETURN elementId(d) AS nodeId, coalesce(d.name, d.departmentId) AS label
+ORDER BY label
+"""
+
+# Инструкции, у которых список обязанностей не выписан или не просмотрен.
+Q_JOB_DUTIES = f"""
+MATCH (d:Department)-[:HAS_JOB_DESCRIPTION]->(j:JobDescription)
+WHERE {ACTIVE.format('d')} AND {ACTIVE.format('j')}
+  AND (size(coalesce(j.duties, [])) = 0 OR coalesce(j.dutiesReviewed, false) = false)
+RETURN elementId(d) AS nodeId,
+       coalesce(d.name, d.departmentId, '?') + ' — ' + coalesce(j.title, '?') AS label,
+       size(coalesce(j.duties, [])) AS duties
+ORDER BY label
+"""
+
 Q_ARCHIVED = """
 MATCH (n)
-WHERE (n:Order OR n:Clause OR n:Rule OR n:CheckTarget OR n:ViolationExample OR n:Department)
+WHERE (n:Order OR n:Clause OR n:Rule OR n:CheckTarget OR n:ViolationExample OR n:Department
+       OR n:JobDescription)
   AND n.status = 'archived'
 RETURN head(labels(n)) AS kind, count(*) AS total
 """
@@ -133,7 +173,7 @@ RETURN head(labels(n)) AS kind, count(*) AS total
 KIND_NAMES = {
     "Order": "приказ", "Clause": "пункт", "Rule": "правило",
     "CheckTarget": "атрибут", "ViolationExample": "пример",
-    "Department": "подразделение",
+    "Department": "подразделение", "JobDescription": "должностная инструкция",
 }
 
 
@@ -354,6 +394,43 @@ def collect() -> dict[str, Any]:
             "поэтому автоматически он не проставляется.",
             items=[{"label": d["label"], "nodeId": d["nodeId"], "kind": "Department"}
                    for d in departments_without_id],
+        ))
+
+    # Должностные инструкции: без них правило проверить нечем
+    without_jobs = _run(Q_DEPARTMENTS_WITHOUT_JOB_DESCRIPTIONS)
+    if without_jobs:
+        issues.append(_issue(
+            "departments_without_job_descriptions", WARNING,
+            "Подразделения без должностных инструкций",
+            "В подразделении действует правило, которое сравнивает цель с должностными "
+            "инструкциями (" + ", ".join(r["rule"] for r in _run(Q_JOB_RULES)) + "), "
+            "но инструкции не загружены. Сравнивать не с чем, поэтому цели этих "
+            "подразделений не разрешаются автоматически и уходят на ручную проверку.",
+            items=[{"label": d["label"], "nodeId": d["nodeId"], "kind": "Department"}
+                   for d in without_jobs],
+        ))
+
+    job_duties = _run(Q_JOB_DUTIES)
+    no_duties = [row for row in job_duties if not row["duties"]]
+    if no_duties:
+        issues.append(_issue(
+            "job_descriptions_without_duties", WARNING,
+            "Должностные инструкции без списка обязанностей",
+            "Список обязанностей не выписан — модель не ответила при загрузке. Цель "
+            "сравнивается с полным текстом инструкции: это медленнее, а длинный текст "
+            "сравнивается не целиком. Откройте инструкцию и извлеките обязанности заново.",
+            items=[{"label": row["label"], "nodeId": row["nodeId"], "kind": "Department"}
+                   for row in no_duties],
+        ))
+    unreviewed = [row for row in job_duties if row["duties"]]
+    if unreviewed:
+        issues.append(_issue(
+            "job_duties_unreviewed", INFO,
+            "Списки обязанностей, не проверенные редактором",
+            "Список выписала модель, и он уже используется в проверках. Просмотрите его: "
+            "пропущенная обязанность — это пропущенное нарушение.",
+            items=[{"label": row["label"], "nodeId": row["nodeId"], "kind": "Department"}
+                   for row in unreviewed],
         ))
 
     candidates = [row for row in exceptions if row["status"] == "candidate"]

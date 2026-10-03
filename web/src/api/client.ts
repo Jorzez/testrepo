@@ -1,6 +1,8 @@
 import type {
-  Account, CheckResult, CheckTarget, Department, Descendants, Diagnostics, ExceptionStatus, FlatClause,
-  NodeProps, Order, RepairReport, Role, RuleType, Status, User, UserStatus,
+  ApiKey, ApiKeyCreated, Settings,
+  CheckMode, CheckRecord, GraphEdge, GraphNode, MonitoringNow, MonitoringStats, StatsStep,
+  Account, CheckResult, CheckTarget, Department, Descendants, Diagnostics, ExamplesCheck, ExceptionStatus, FlatClause,
+  NodeProps, Order, RepairReport, Role, RuleType, Status, TargetSource, User, UserStatus,
 } from "./types";
 
 /* API всегда на том же origin, под /api: в сборке его проксирует nginx
@@ -59,6 +61,14 @@ export interface Created {
   [key: string]: unknown;
 }
 
+/** Инструкция после загрузки или правки: список обязанностей, выписанный моделью. */
+export interface JobDescriptionNode extends Created {
+  title?: string;
+  duties?: string[];
+  /** Почему обязанности не выписаны (модель не ответила); иначе null. */
+  dutiesError?: string | null;
+}
+
 const enc = encodeURIComponent;
 const node = (id: string) => `/catalog/nodes/${enc(id)}`;
 
@@ -68,6 +78,14 @@ export interface ScopeException {
   basis: string | null;
   note: string | null;
 }
+
+/** Период отбора истории: start включительно, end — нет; ISO 8601. */
+export interface Period {
+  start: string;
+  end: string;
+  mode?: CheckMode | "";
+}
+const period = (p: Period) => `start=${enc(p.start)}&end=${enc(p.end)}${p.mode ? `&mode=${p.mode}` : ""}`;
 
 export const api = {
   me: () => request<Account>("GET", "/auth/me"),
@@ -88,6 +106,22 @@ export const api = {
   departments: (includeArchived: boolean) =>
     request<{ departments: Department[] }>("GET", `/catalog/departments?include_archived=${includeArchived}`),
   diagnostics: () => request<Diagnostics>("GET", "/catalog/diagnostics"),
+  examplesCheck: () => request<ExamplesCheck>("GET", "/catalog/examples-check"),
+  startExamplesCheck: () => request<ExamplesCheck>("POST", "/catalog/examples-check"),
+  graph: () => request<{ nodes: GraphNode[]; edges: GraphEdge[] }>("GET", "/catalog/graph"),
+
+  monitoringNow: () => request<MonitoringNow>("GET", "/monitoring/now"),
+  monitoringStats: (p: Period, step: StatsStep, timezone: string) =>
+    request<MonitoringStats>("GET", `/monitoring/stats?${period(p)}&step=${step}&timezone=${enc(timezone)}`),
+  monitoringHistory: (p: Period, limit: number, offset: number) =>
+    request<{ records: CheckRecord[]; total: number }>(
+      "GET", `/monitoring/history?${period(p)}&limit=${limit}&offset=${offset}`),
+
+  settings: () => request<Settings>("GET", "/settings"),
+  saveSettings: (changes: Partial<Settings>) => request<Settings>("PUT", "/settings", changes),
+  apiKeys: () => request<{ keys: ApiKey[] }>("GET", "/settings/api-keys"),
+  createApiKey: (name: string) => request<ApiKeyCreated>("POST", "/settings/api-keys", { name }),
+  deleteApiKey: (keyId: string) => request("DELETE", `/settings/api-keys/${enc(keyId)}`),
 
   node: (id: string) => request<NodeProps>("GET", node(id)),
   patch: (id: string, properties: Record<string, unknown>) =>
@@ -105,8 +139,16 @@ export const api = {
   }) => request<Created>("POST", "/catalog/rules", body),
   createExample: (body: { ruleNodeId: string; text: string; isViolation: boolean }) =>
     request<Created>("POST", "/catalog/examples", body),
-  createTarget: (body: { name: string; description: string }) =>
+  createTarget: (body: { name: string; description: string; source?: TargetSource | null }) =>
     request<Created>("POST", "/catalog/check-targets", body),
+  createJobDescription: (body: { departmentNodeId: string; title: string; text: string }) =>
+    request<JobDescriptionNode>("POST", "/catalog/job-descriptions", body),
+  updateJobDescription: (id: string, body: { title: string; text: string }) =>
+    request<JobDescriptionNode>("PUT", `/catalog/job-descriptions/${enc(id)}`, body),
+  extractJobDuties: (id: string) =>
+    request<JobDescriptionNode>("POST", `/catalog/job-descriptions/${enc(id)}/extract-duties`),
+  setJobDuties: (id: string, duties: string[]) =>
+    request<JobDescriptionNode>("PUT", `/catalog/job-descriptions/${enc(id)}/duties`, { duties }),
 
   createDepartment: (body: { departmentId: string; name: string }) =>
     request<Created>("POST", "/catalog/departments", body),

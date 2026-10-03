@@ -74,7 +74,7 @@ services:
     command: >
       --model /models/${VLLM_MODEL_DIR:-Qwen3-8B}
       --served-model-name ${VLLM_MODEL}
-      --max-model-len 8192
+      --max-model-len ${VLLM_MAX_MODEL_LEN:-16384}
       --gpu-memory-utilization 0.90
     ports:
       - "127.0.0.1:8000:8000"
@@ -109,8 +109,17 @@ services:
       VLLM_MODEL: ${VLLM_MODEL}
       LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-60}
       LLM_MAX_RETRIES: ${LLM_MAX_RETRIES:-2}
-      BULK_MAX_WORKERS: ${BULK_MAX_WORKERS:-4}
+      BULK_MAX_WORKERS: ${BULK_MAX_WORKERS:-16}
+      LLM_MAX_CONCURRENCY: ${LLM_MAX_CONCURRENCY:-32}
+      LLM_INTERACTIVE_RESERVE: ${LLM_INTERACTIVE_RESERVE:-4}
+      CHECK_CACHE_TTL_SECONDS: ${CHECK_CACHE_TTL_SECONDS:-3600}
+      HISTORY_RETENTION_DAYS: ${HISTORY_RETENTION_DAYS:-365}
+      # Согласовано с окном модели (VLLM_MAX_MODEL_LEN): меняйте вместе.
+      JOB_TEXT_MAX_CHARS: ${JOB_TEXT_MAX_CHARS:-24000}
+      LLM_JSON_MODE: ${LLM_JSON_MODE:-1}
       MAX_GOALS_PER_REQUEST: ${MAX_GOALS_PER_REQUEST:-200}
+      CHECK_RATE_PER_MINUTE: ${CHECK_RATE_PER_MINUTE:-600}
+      PROMPT_EXAMPLES_PER_KIND: ${PROMPT_EXAMPLES_PER_KIND:-2}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       # Вход в интерфейс: пароль проверяет каталог, роли — реестр в Neo4j.
       AUTH_BACKEND: ${AUTH_BACKEND:-ldap}

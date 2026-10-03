@@ -1,31 +1,38 @@
-import type { ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 
 import logo from "./assets/logo.png";
 import { CheckView } from "./features/check/CheckView";
 import { DepartmentsTab } from "./features/departments/DepartmentsTab";
+import { GraphTab } from "./features/graph/GraphTab";
+import { MonitoringTab } from "./features/monitoring/MonitoringTab";
 import { HealthTab } from "./features/health/HealthTab";
 import { OrdersView } from "./features/orders/OrdersView";
 import { RulePanel } from "./features/rules/RulePanel";
 import { RulesView } from "./features/rules/RulesView";
+import { SettingsTab } from "./features/settings/SettingsTab";
 import { TargetsTab } from "./features/targets/TargetsTab";
 import { UsersTab } from "./features/users/UsersTab";
 import { ROLE_LABEL, useAuth } from "./state/auth";
-import { useCatalog, type Section } from "./state/catalog";
+import { sectionPath, useCatalog, type Section } from "./state/catalog";
 
 const icon = (path: ReactNode) => (
   <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
     aria-hidden="true">{path}</svg>
 );
 
-const SECTIONS: { id: Section; label: string; icon: ReactNode; adminOnly?: boolean }[] = [
-  { id: "check", label: "Проверка цели", icon: icon(<path d="M4 10l4 4 8-9" />) },
-  { id: "rules", label: "Правила", icon: icon(<path d="M3 3h14v14H3zM3 8h14M3 13h14M8 3v14M13 3v14" />) },
-  { id: "orders", label: "Приказы", icon: icon(<path d="M5 2h8l3 3v13H5zM8 8h6M8 12h6" />) },
-  { id: "departments", label: "Подразделения", icon: icon(<><circle cx="10" cy="7" r="3" /><path d="M4 17c0-3 3-5 6-5s6 2 6 5" /></>) },
-  { id: "targets", label: "Атрибуты", icon: icon(<path d="M3 5h9l5 5-5 5H3zM7 10h.01" />) },
-  { id: "health", label: "Замечания", icon: icon(<path d="M10 3l8 14H2zM10 8v4M10 14.5v.5" />) },
-  { id: "users", label: "Пользователи", adminOnly: true,
+const SECTIONS: { id: Section; label: string; icon: ReactNode; view: () => ReactNode; adminOnly?: boolean }[] = [
+  { id: "check", view: () => <CheckView />, label: "Проверка цели", icon: icon(<path d="M4 10l4 4 8-9" />) },
+  { id: "rules", view: () => <RulesView />, label: "Правила", icon: icon(<path d="M3 3h14v14H3zM3 8h14M3 13h14M8 3v14M13 3v14" />) },
+  { id: "orders", view: () => <OrdersView />, label: "Приказы", icon: icon(<path d="M5 2h8l3 3v13H5zM8 8h6M8 12h6" />) },
+  { id: "departments", view: () => <DepartmentsTab />, label: "Подразделения", icon: icon(<><circle cx="10" cy="7" r="3" /><path d="M4 17c0-3 3-5 6-5s6 2 6 5" /></>) },
+  { id: "targets", view: () => <TargetsTab />, label: "Атрибуты", icon: icon(<path d="M3 5h9l5 5-5 5H3zM7 10h.01" />) },
+  { id: "graph", view: () => <GraphTab />, label: "Граф", icon: icon(<><circle cx="5" cy="5" r="2" /><circle cx="15" cy="7" r="2" /><circle cx="8" cy="15" r="2" /><path d="M7 5.5l6 1M6 7l1.5 6M13.5 8.5L9.5 13.5" /></>) },
+  { id: "health", view: () => <HealthTab />, label: "Замечания", icon: icon(<path d="M10 3l8 14H2zM10 8v4M10 14.5v.5" />) },
+  { id: "monitoring", view: () => <MonitoringTab />, label: "Мониторинг", adminOnly: true, icon: icon(<path d="M2 11h3l2-6 4 11 2.5-7 1.5 2h3" />) },
+  { id: "users", view: () => <UsersTab />, label: "Пользователи", adminOnly: true,
     icon: icon(<><circle cx="7.5" cy="7" r="2.6" /><path d="M2.5 16c0-2.6 2.2-4.4 5-4.4s5 1.8 5 4.4M13.5 4.6a2.6 2.6 0 010 4.8M15 11.8c1.6.6 2.6 2 2.6 4.2" /></>) },
+  { id: "settings", view: () => <SettingsTab />, label: "Настройки", adminOnly: true,
+    icon: icon(<><path d="M3 6h7M14 6h3M3 14h3M10 14h7" /><circle cx="12" cy="6" r="2" /><circle cx="8" cy="14" r="2" /></>) },
 ];
 
 const API_STATE = {
@@ -35,12 +42,35 @@ const API_STATE = {
 };
 
 export function App() {
-  const { section, setSection, apiState, health, reload, panelRule, wizard } = useCatalog();
+  const { section: requested, setSection, apiState, health, reload, panelRule, wizard } = useCatalog();
   const { user, isAdmin, logout } = useAuth();
+  // Раздел администратора по прямому адресу остальным не показывается.
+  const allowed = SECTIONS.filter((s) => isAdmin || !s.adminOnly);
+  const current = allowed.find((s) => s.id === requested) ?? allowed[0];
+  const section = current.id;
+  useEffect(() => {
+    if (section === requested) return;
+    history.replaceState(null, "", sectionPath(section));
+    setSection(section);
+  }, [section, requested, setSection]);
+  // Обычный щелчок переключает раздел без перезагрузки; с Ctrl/⌘ ссылка открывается в новой вкладке.
+  const open = (event: MouseEvent, id: Section) => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    setSection(id);
+  };
   const pill = API_STATE[apiState];
   // На значке — число ошибок, а если их нет, то предупреждений.
   const badge = health?.error || health?.warning || 0;
   const withPanel = !!panelRule && !wizard && (section === "rules" || section === "orders");
+
+  // Подложка активного пункта меню: встаёт под выбранную кнопку и переезжает к новой.
+  const nav = useRef<HTMLElement>(null);
+  const [indicator, setIndicator] = useState<{ top: number; height: number } | null>(null);
+  useLayoutEffect(() => {
+    const active = nav.current?.querySelector<HTMLElement>('[aria-selected="true"]');
+    setIndicator(active ? { top: active.offsetTop, height: active.offsetHeight } : null);
+  }, [section, isAdmin]);
 
   return (
     <div className={`shell ${withPanel ? "with-panel" : ""}`}>
@@ -49,12 +79,17 @@ export function App() {
           <img src={logo} alt="" />
           <div>Проверка целей<small>каталог требований</small></div>
         </div>
-        <nav role="tablist" aria-orientation="vertical">
-          {SECTIONS.filter((s) => isAdmin || !s.adminOnly).map((s) => (
-            <button key={s.id} role="tab" className="nav-item" aria-selected={section === s.id} onClick={() => setSection(s.id)}>
+        <nav role="tablist" aria-orientation="vertical" ref={nav}>
+          {indicator && (
+            <div className="nav-ind" aria-hidden="true"
+              style={{ transform: `translateY(${indicator.top}px)`, height: indicator.height }} />
+          )}
+          {allowed.map((s) => (
+            <a key={s.id} role="tab" className="nav-item" aria-selected={section === s.id} href={sectionPath(s.id)}
+              onClick={(event) => open(event, s.id)}>
               {s.icon}{s.label}
               {s.id === "health" && badge > 0 && <span className={`n ${health?.error ? "err" : "warn"}`}>{badge}</span>}
-            </button>
+            </a>
           ))}
         </nav>
         <div className="spacer" />
@@ -71,16 +106,8 @@ export function App() {
         </div>
       </aside>
 
-      {/* Разделы не размонтируются: введённая цель и фильтры сохраняются при переключении. */}
-      <main className="main">
-        <CheckView hidden={section !== "check"} />
-        <RulesView hidden={section !== "rules"} />
-        <OrdersView hidden={section !== "orders"} />
-        <DepartmentsTab hidden={section !== "departments"} />
-        <TargetsTab hidden={section !== "targets"} />
-        <HealthTab hidden={section !== "health"} />
-        {isAdmin && <UsersTab hidden={section !== "users"} />}
-      </main>
+      {/* Отрисован только открытый раздел: у каждого свой адрес. */}
+      <main className="main">{current.view()}</main>
 
       {withPanel && <RulePanel />}
     </div>
