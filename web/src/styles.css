@@ -147,6 +147,9 @@ label.check{display:inline-flex;align-items:center;gap:7px;cursor:pointer;color:
 .chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 .vitem .chips + .chips{margin-top:6px}
 .quote{color:var(--ink-3);font-style:italic}
+details > summary{cursor:pointer;font-weight:500}
+.json{margin:12px 0 0;padding:12px 14px;border-radius:10px;background:var(--panel-2);max-height:420px;overflow:auto;
+  white-space:pre-wrap;word-break:break-word}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow)}
 .card.pad{padding:18px 20px}
 .is-archived{opacity:.6}

@@ -13,6 +13,9 @@ test("ответ проверки объясняет, что не так и ка
   await expect(violation).toContainText("Пример: «В рамках проекта «Альфа»");
   // Найденный атрибут подтверждён цитатой из цели.
   await expect(result.locator(".quote")).toHaveText("«31.12.2025»");
+  // Под вердиктом — ответ API как есть.
+  expect(JSON.parse(await app.locator("#checkJson pre").innerText())).toMatchObject(
+    { goal: GOAL, status: "VIOLATIONS_FOUND", attribute_quotes: { срок_исполнения: "31.12.2025" } });
 
   // Результат не теряется при переходе между разделами.
   await go(app, "Атрибуты");

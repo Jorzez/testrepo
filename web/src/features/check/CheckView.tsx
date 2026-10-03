@@ -76,6 +76,12 @@ export function CheckView() {
             const cell = departmentId ? cellState(rule, departmentId) : null;
             return !(cell?.kind === "exception" && cell.exception.status === "active");
           }).length} />}
+          {result && (
+            <details className="card pad" id="checkJson" open style={{ marginTop: 16 }}>
+              <summary>Ответ API (JSON)</summary>
+              <pre className="mono json">{JSON.stringify(result, null, 2)}</pre>
+            </details>
+          )}
         </div>
 
         <aside style={{ display: "flex", flexDirection: "column", gap: 16 }}>
