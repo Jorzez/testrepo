@@ -145,6 +145,8 @@ label.check{display:inline-flex;align-items:center;gap:7px;cursor:pointer;color:
 .chip-btn{cursor:pointer;font:inherit;font-size:13px}
 .chip-btn:hover{border-color:var(--brand);color:var(--brand)}
 .chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.vitem .chips + .chips{margin-top:6px}
+.quote{color:var(--ink-3);font-style:italic}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow)}
 .card.pad{padding:18px 20px}
 .is-archived{opacity:.6}

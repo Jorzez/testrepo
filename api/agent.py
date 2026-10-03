@@ -81,7 +81,7 @@ BULK_MAX_WORKERS = max(1, int(os.getenv("BULK_MAX_WORKERS", "16")))
 JOB_TEXT_MAX_CHARS = max(1000, int(os.getenv("JOB_TEXT_MAX_CHARS", "24000")))
 # Потолок длины ответа: нужный ответ — десятки токенов, а сбившаяся модель
 # без потолка держала бы слот очереди, пока не упрётся в окно.
-LLM_MAX_TOKENS = max(64, int(os.getenv("LLM_MAX_TOKENS", "512")))
+LLM_MAX_TOKENS = max(64, int(os.getenv("LLM_MAX_TOKENS", "1024")))
 # Список обязанностей из инструкции — длинный ответ, ему нужен свой потолок
 # и запас окна под него.
 DUTIES_MAX_TOKENS = max(256, int(os.getenv("DUTIES_MAX_TOKENS", "4096")))
@@ -117,6 +117,10 @@ class Extraction:
 
     attributes: list[str]
     warnings: list[str] = field(default_factory=list)
+    # Цитаты из цели, по которым модель нашла атрибут (настройка evidenceQuotes).
+    quotes: dict[str, str] = field(default_factory=dict)
+    # Атрибуты, цитаты которых в тексте цели нет: ответу по ним доверять нельзя.
+    unquoted: list[str] = field(default_factory=list)
 
 
 def get_client() -> OpenAI:
@@ -202,10 +206,20 @@ EXTRACT_SYSTEM = """Ты — классификатор формулировок
 Определи, какие из перечисленных атрибутов присутствуют в цели пользователя.
 Копируй имена атрибутов из списка выше буква в букву, не придумывай новые
 и не меняй написание. Если ни один атрибут не присутствует, верни пустой список.
-
+{quotes_hint}
 {goal_is_data}
 
-Ответь строго JSON-объектом вида {{"attributes": ["имя_атрибута"]}} без пояснений."""
+Ответь строго JSON-объектом вида {answer} без пояснений."""
+
+ANSWER_NAMES = '{"attributes": ["имя_атрибута"]}'
+ANSWER_QUOTES = '{"attributes": [{"name": "имя_атрибута", "quote": "фрагмент цели"}]}'
+# Цитата привязывает ответ к тексту: «найти» атрибут, которого в цели нет,
+# можно только сославшись на слова, которые увидит проверяющий.
+QUOTES_HINT = """
+К каждому найденному атрибуту приведи цитату — короткий фрагмент цели, по
+которому он определён. Цитату копируй из цели дословно, без пересказа и
+без сокращений внутри фрагмента.
+"""
 
 EXAMPLES_HINT = """
 Под атрибутом могут быть примеры целей: «есть» — в такой цели атрибут
@@ -333,8 +347,11 @@ def extract_messages(
         shown = _example_lines((examples or {}).get(target["name"]), skip)
         with_examples = with_examples or bool(shown)
         lines.extend(shown)
+    quotes = settings.flag("evidenceQuotes")
     system = EXTRACT_SYSTEM.format(attrs="\n".join(lines), goal_is_data=GOAL_IS_DATA,
-                                   examples_hint=EXAMPLES_HINT if with_examples else "")
+                                   examples_hint=EXAMPLES_HINT if with_examples else "",
+                                   quotes_hint=QUOTES_HINT if quotes else "",
+                                   answer=ANSWER_QUOTES if quotes else ANSWER_NAMES)
     return system, GOAL_MESSAGE.format(goal=clean_goal(goal))
 
 
@@ -407,15 +424,39 @@ def parse_attributes_json(text: str) -> dict[str, Any]:
     return data
 
 
+def _comparable_text(text: str) -> str:
+    """Текст для сравнения цитаты с целью: без регистра, «ё» и разницы в пробелах."""
+    return " ".join(text.casefold().replace("ё", "е").split())
+
+
+def quote_in_goal(quote: Any, goal: str) -> bool:
+    """Есть ли цитата в тексте цели. Кавычки и многоточие по краям не считаются."""
+    if not isinstance(quote, str):
+        return False
+    needle = _comparable_text(quote.strip(" \t\n\"'«»“”„….,;:"))
+    return len(needle) >= 2 and needle in _comparable_text(goal)
+
+
 def resolve_attributes(
-    raw_attributes: list[Any], targets: list[dict[str, str]]
+    raw_attributes: list[Any], targets: list[dict[str, str]], goal: str | None = None
 ) -> Extraction:
-    """Сопоставляет ответ модели со словарём графа с учётом написания."""
+    """Сопоставляет ответ модели со словарём графа с учётом написания.
+
+    goal передаётся, когда модель отвечает с цитатами ({"name", "quote"}):
+    цитата сверяется с текстом цели. Атрибут без подтверждённой цитаты
+    остаётся найденным — отбросить его значило бы пропустить запрет, — но
+    попадает в unquoted, и цель автоматически не разрешается.
+    """
     index = index_targets(targets)
     resolved: list[str] = []
     warnings: list[str] = []
+    quotes: dict[str, str] = {}
+    unquoted: list[str] = []
 
     for item in raw_attributes:
+        quote = None
+        if goal is not None and isinstance(item, dict):
+            item, quote = item.get("name"), item.get("quote")
         if not isinstance(item, str):
             warnings.append(f"Модель вернула атрибут не-строку и он отброшен: {item!r}")
             continue
@@ -430,11 +471,18 @@ def resolve_attributes(
             # Написание разошлось, но атрибут узнан — это не повод
             # засчитывать требование невыполненным.
             log.info("Атрибут %r сопоставлен с %r по нормализованному имени", item, variants)
+        confirmed = goal is not None and quote_in_goal(quote, goal)
         for name in variants:
             if name not in resolved:
                 resolved.append(name)
+            if confirmed:
+                quotes.setdefault(name, quote.strip())
+            elif goal is not None and name not in unquoted:
+                unquoted.append(name)
 
-    return Extraction(attributes=resolved, warnings=warnings)
+    # Одна подтверждённая цитата из нескольких упоминаний атрибута — достаточно.
+    unquoted = [name for name in unquoted if name not in quotes]
+    return Extraction(attributes=resolved, warnings=warnings, quotes=quotes, unquoted=unquoted)
 
 
 def extract_attributes(
@@ -453,7 +501,10 @@ def extract_attributes(
 
     # Имена в схеме — ровно те, что в промпте: придумать атрибут модель не может.
     names = list({normalize_name(t["name"]): t["name"] for t in reversed(targets)}.values())
-    schema = _schema({"attributes": {"type": "array", "items": {"type": "string", "enum": names}}})
+    quotes = settings.flag("evidenceQuotes")
+    name = {"type": "string", "enum": names}
+    schema = _schema({"attributes": {"type": "array", "items": _schema(
+        {"name": name, "quote": {"type": "string"}}) if quotes else name}})
     system, message = extract_messages(goal, targets, examples, holdout)
     data = parse_attributes_json(ask_model(message, schema, system=system))
     raw_attributes = data.get("attributes")
@@ -461,7 +512,7 @@ def extract_attributes(
         log.warning("Модель вернула attributes неверного типа: %r", raw_attributes)
         raise ExtractionError("поле attributes отсутствует или не является списком")
 
-    return resolve_attributes(raw_attributes, targets)
+    return resolve_attributes(raw_attributes, targets, clean_goal(goal) if quotes else None)
 
 
 # --------------------------------------------------------------------------
@@ -836,6 +887,7 @@ def _check_goal(
             "allowed": False,
             "department": None,
             "detected_attributes": [],
+            "attribute_quotes": {},
             "violations": [],
             "exemptions": [],
             "notes": [
@@ -873,11 +925,17 @@ def _check_goal(
     suspicious = settings.flag("injectionGuard") and looks_like_injection(goal)
     if suspicious:
         notes.append(INJECTION_NOTE)
+    if extraction.unquoted:
+        notes.append(
+            "Модель не подтвердила цитатой из цели атрибуты: "
+            + ", ".join(f'"{name}"' for name in extraction.unquoted)
+            + ". Автоматически такая цель не разрешается: проверьте её вручную."
+        )
 
     # fail-closed: правило, которое не удалось проверить, цель не разрешает.
     if violations:
         status = STATUS_VIOLATIONS
-    elif job.unverified or suspicious:
+    elif job.unverified or suspicious or extraction.unquoted:
         status = STATUS_MANUAL_REVIEW
     else:
         status = STATUS_ALLOWED
@@ -888,6 +946,7 @@ def _check_goal(
         "allowed": status == STATUS_ALLOWED,
         "department": department,
         "detected_attributes": attributes,
+        "attribute_quotes": extraction.quotes,
         "violations": violations,
         "exemptions": exemptions,
         "notes": notes,

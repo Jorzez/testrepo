@@ -179,6 +179,8 @@ export interface Settings {
   promptExamples: boolean;
   /** Цель с указаниями для модели автоматически не разрешается. */
   injectionGuard: boolean;
+  /** Модель подтверждает каждый найденный атрибут цитатой из цели. */
+  evidenceQuotes: boolean;
   /** Примеров «есть» и «нет» на атрибут в промпте. */
   promptExamplesPerKind: number;
   /** Помнить ответ на ту же цель того же подразделения. */
@@ -367,6 +369,8 @@ export interface CheckResult {
   /** null — подразделение не передано или неизвестно: применены все правила. */
   department: { id: string; name: string } | null;
   detected_attributes: string[];
+  /** Цитаты из цели, по которым атрибут найден; у атрибута без подтверждённой цитаты записи нет. */
+  attribute_quotes?: Record<string, string>;
   violations: Violation[];
   exemptions: Exemption[];
   notes: string[];

@@ -27,6 +27,9 @@ DEFAULTS: dict[str, bool | int] = {
     "promptExamples": False,
     # Цель с текстом, похожим на указания модели, автоматически не разрешается.
     "injectionGuard": True,
+    # К каждому найденному атрибуту модель приводит цитату из цели; цитата,
+    # которой в тексте нет, отправляет цель на ручную проверку.
+    "evidenceQuotes": True,
     # Сколько примеров «есть» и «нет» на атрибут уходит в промпт.
     "promptExamplesPerKind": 2,
     # Готовый ответ на ту же цель того же подразделения и срок его жизни.
@@ -53,7 +56,7 @@ NUMBERS: dict[str, tuple[str, int, int]] = {
     "historyRetentionDays": ("HISTORY_RETENTION_DAYS", 0, 3650),
 }
 # Настройки, от которых зависит промпт, а значит, и готовые ответы проверок.
-PROMPT_KEYS = {"promptExamples", "promptExamplesPerKind", "injectionGuard"}
+PROMPT_KEYS = {"promptExamples", "promptExamplesPerKind", "injectionGuard", "evidenceQuotes"}
 
 
 def default(key: str) -> bool | int:

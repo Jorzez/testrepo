@@ -460,6 +460,15 @@ export function createBackend(options: { user?: string } = {}) {
   }
 
   /** Вместо модели: атрибуты по ключевым словам — и в проверке цели, и в проверке примеров. */
+  /** Цитаты «модели»: слово цели, по которому сработало ключевое слово. */
+  const quotesByKeywords = (goal: string) => {
+    const words: [string, RegExp][] = [
+      ["проект", /\S*проект\S*/i], ["срок_исполнения", /\d{2}\.\d{2}\.\d{4}|\S*квартал\S*|\b20\d{2}\b/i],
+      ["обучение", /\S*(обучени|курс)\S*/i],
+    ];
+    return Object.fromEntries(words.flatMap(([name, re]) => { const m = re.exec(goal); return m ? [[name, m[0]]] : []; }));
+  };
+
   const detectByKeywords = (text: string) => [
     /проект/.test(text) ? "проект" : null,
     /\d{2}\.\d{2}\.\d{4}|квартал|\b20\d{2}\b/.test(text) ? "срок_исполнения" : null,
@@ -526,7 +535,7 @@ export function createBackend(options: { user?: string } = {}) {
   /* Раздел «Настройки»: переключатели проверки и ключи внешних систем. На
      проверку по ключевым словам переключатели в фейке не влияют. */
   const settings: Record<string, boolean | number> = {
-    promptExamples: false, injectionGuard: true, promptExamplesPerKind: 2,
+    promptExamples: false, injectionGuard: true, evidenceQuotes: true, promptExamplesPerKind: 2,
     checkCache: true, checkCacheTtlSeconds: 3600, bulkChecks: true, checkRatePerMinute: 600,
     historyEnabled: true, historyRetentionDays: 365, apiKeysEnabled: true, maintenance: false,
   };
@@ -550,7 +559,7 @@ export function createBackend(options: { user?: string } = {}) {
       }
       for (const [key, value] of changes) settings[key] = value as boolean | number;
       // Промпт стал другим — результат проверки примеров устарел.
-      if (changes.some(([key]) => ["promptExamples", "injectionGuard", "promptExamplesPerKind"].includes(key)))
+      if (changes.some(([key]) => ["promptExamples", "injectionGuard", "evidenceQuotes", "promptExamplesPerKind"].includes(key)))
         catalogVersion++;
       return settings;
     }
@@ -791,7 +800,8 @@ export function createBackend(options: { user?: string } = {}) {
       goal, status, allowed: status === "ALLOWED",
       department: department
         ? { id: String(department.props.departmentId), name: String(department.props.name ?? "") } : null,
-      detected_attributes: detected, violations, exemptions, notes,
+      detected_attributes: detected, attribute_quotes: settings.evidenceQuotes ? quotesByKeywords(goal) : {},
+      violations, exemptions, notes,
     };
   }
 

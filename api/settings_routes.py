@@ -31,6 +31,8 @@ class SettingsPatch(BaseModel):
     promptExamples: Optional[bool] = Field(None, description="Примеры каталога в промпте извлечения")
     injectionGuard: Optional[bool] = Field(
         None, description="Цель с указаниями для модели автоматически не разрешается")
+    evidenceQuotes: Optional[bool] = Field(
+        None, description="Модель подтверждает каждый найденный атрибут цитатой из цели")
     promptExamplesPerKind: Optional[int] = _number(
         "promptExamplesPerKind", "Примеров «есть» и «нет» на атрибут в промпте")
     checkCache: Optional[bool] = Field(None, description="Помнить ответ на ту же цель")

@@ -80,7 +80,7 @@ def bearer(key):
 
 
 DEFAULTS = {
-    "promptExamples": False, "injectionGuard": True, "promptExamplesPerKind": 2,
+    "promptExamples": False, "injectionGuard": True, "evidenceQuotes": True, "promptExamplesPerKind": 2,
     "checkCache": True, "checkCacheTtlSeconds": 3600, "bulkChecks": True, "checkRatePerMinute": 600,
     "historyEnabled": True, "historyRetentionDays": 365, "apiKeysEnabled": True, "maintenance": False,
 }

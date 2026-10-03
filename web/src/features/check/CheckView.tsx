@@ -196,7 +196,12 @@ function Verdict({ result, total, onTrace }: { result: CheckResult; total: numbe
         <div className="vitem">
           <span className="ico good">✓</span>
           <div className="t" style={{ fontSize: 14 }}>Найдено в цели</div>
-          <div className="d chips">{result.detected_attributes.map((a) => <Chip key={a}>{a}</Chip>)}</div>
+          {result.detected_attributes.map((a) => (
+            <div key={a} className="d chips">
+              <Chip>{a}</Chip>
+              {result.attribute_quotes?.[a] && <span className="quote">«{result.attribute_quotes[a]}»</span>}
+            </div>
+          ))}
         </div>
       )}
     </div>

@@ -131,6 +131,7 @@ curl -s localhost:8080/ready           # readiness + диагностика гр
   "allowed": false,
   "department": {"id": "UCT", "name": "УЦТ"},
   "detected_attributes": ["срок_исполнения", "измеримость"],
+  "attribute_quotes": {"срок_исполнения": "до 31 декабря 2026 года", "измеримость": "на 15%"},
   "violations": [
     {
       "order_number": "ПР-01",
@@ -226,6 +227,7 @@ DELETE /settings/api-keys/{keyId}                отозвать ключ; де
 |---|---|---|
 | `promptExamples` | `false` | к атрибутам в промпте добавляются примеры из каталога — см. [архитектуру](architecture.md#примеры-в-промпте) |
 | `injectionGuard` | `true` | цель с текстом, похожим на указания модели, получает `NEEDS_MANUAL_REVIEW` вместо `ALLOWED` — см. [безопасность](security.md#указания-модели-в-тексте-цели) |
+| `evidenceQuotes` | `true` | модель подтверждает каждый найденный атрибут цитатой из цели (`attribute_quotes`); если цитаты в тексте цели нет, цель получает `NEEDS_MANUAL_REVIEW` вместо `ALLOWED` |
 | `promptExamplesPerKind` | `2` | сколько примеров «есть» и «нет» на атрибут уходит в промпт; от 1 до 10 |
 | `checkCache` | `true` | помнить ответ на ту же цель того же подразделения |
 | `checkCacheTtlSeconds` | `3600` | срок жизни ответа в кэше, с; от 0 до 604800 |
@@ -241,7 +243,7 @@ DELETE /settings/api-keys/{keyId}                отозвать ключ; де
 `CHECK_RATE_PER_MINUTE`, `HISTORY_RETENTION_DAYS`) и действует, пока настройку
 не сохранили через API. Готовые ответы проверок сбрасываются только при смене
 настроек, от которых зависит промпт: `promptExamples`, `promptExamplesPerKind`,
-`injectionGuard`.
+`injectionGuard`, `evidenceQuotes`.
 
 ## Эндпоинты каталога
 

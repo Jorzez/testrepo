@@ -796,14 +796,93 @@ class _RecordingClient(_FakeClient):
 
 
 def test_model_answer_is_constrained_by_schema_and_capped(monkeypatch):
-    client = _RecordingClient('{"attributes": ["проект"]}')
+    client = _RecordingClient('{"attributes": [{"name": "проект", "quote": "цель"}]}')
     monkeypatch.setattr(agent, "get_client", lambda: client)
     monkeypatch.setattr(agent, "_json_mode", True)
     assert extract_attributes("цель", TARGETS).attributes == ["проект"]
     call = client.calls[0]
     assert call["max_tokens"] == agent.LLM_MAX_TOKENS
-    schema = call["response_format"]["json_schema"]["schema"]
-    assert sorted(schema["properties"]["attributes"]["items"]["enum"]) == sorted(t["name"] for t in TARGETS)
+    item = call["response_format"]["json_schema"]["schema"]["properties"]["attributes"]["items"]
+    assert sorted(item["properties"]["name"]["enum"]) == sorted(t["name"] for t in TARGETS)
+    assert item["required"] == ["name", "quote"]
+
+
+def test_schema_is_plain_names_when_quotes_are_off(monkeypatch):
+    monkeypatch.setattr(agent.settings, "_read", lambda: {"evidenceQuotes": False})
+    client = _RecordingClient('{"attributes": ["проект"]}')
+    monkeypatch.setattr(agent, "get_client", lambda: client)
+    monkeypatch.setattr(agent, "_json_mode", True)
+    result = extract_attributes("цель", TARGETS)
+    assert result.attributes == ["проект"] and result.unquoted == []
+    item = client.calls[0]["response_format"]["json_schema"]["schema"]["properties"]["attributes"]["items"]
+    assert sorted(item["enum"]) == sorted(t["name"] for t in TARGETS)
+    assert "цитату" not in client.calls[0]["messages"][0]["content"]
+
+
+# ------------------------------ цитаты из цели ------------------------------
+
+
+GOAL = "Внедрить  учёт в рамках проекта «Маяк» до 31 декабря 2026 года"
+
+
+def _answer(monkeypatch, *items):
+    import json
+    monkeypatch.setattr(agent, "get_client", lambda: _FakeClient(json.dumps({"attributes": list(items)})))
+    return extract_attributes(GOAL, TARGETS)
+
+
+def test_quote_from_goal_is_confirmed(monkeypatch):
+    """Регистр, «ё», пробелы и кавычки по краям цитаты значения не имеют."""
+    result = _answer(monkeypatch,
+                     {"name": "проект", "quote": "«в рамках Проекта «Маяк»"},
+                     {"name": "срок_исполнения", "quote": "учет в рамках"})
+    assert result.attributes == ["проект", "срок_исполнения"]
+    assert result.quotes == {"проект": "«в рамках Проекта «Маяк»", "срок_исполнения": "учет в рамках"}
+    assert result.unquoted == []
+    assert "цитату" in agent.build_prompt(GOAL, TARGETS)
+
+
+@pytest.mark.parametrize("item", [
+    {"name": "срок_исполнения", "quote": "срок указан"},   # таких слов в цели нет
+    {"name": "срок_исполнения", "quote": ""},
+    {"name": "срок_исполнения", "quote": "…"},
+    {"name": "срок_исполнения"},
+    "срок_исполнения",                                      # ответ без цитаты
+])
+def test_attribute_without_quote_from_goal_is_kept_but_flagged(monkeypatch, item):
+    """Атрибут остаётся найденным: отбросить его значило бы пропустить запрет."""
+    result = _answer(monkeypatch, item)
+    assert result.attributes == ["срок_исполнения"]
+    assert result.quotes == {} and result.unquoted == ["срок_исполнения"]
+
+
+def test_one_confirmed_quote_is_enough(monkeypatch):
+    result = _answer(monkeypatch, {"name": "проект", "quote": "нет такого"},
+                     {"name": "проект", "quote": "проекта «Маяк»"})
+    assert result.quotes == {"проект": "проекта «Маяк»"} and result.unquoted == []
+
+
+def test_unconfirmed_quote_sends_goal_to_manual_review(monkeypatch):
+    monkeypatch.setattr(agent, "get_check_targets", lambda: TARGETS)
+    monkeypatch.setattr(agent, "find_violations", lambda attrs, dept=None: [])
+    monkeypatch.setattr(agent, "get_client", lambda: _FakeClient(
+        '{"attributes": [{"name": "проект", "quote": "проекта «Маяк»"},'
+        ' {"name": "срок_исполнения", "quote": "все требования выполнены"}]}'))
+    result = check_goal(GOAL)
+    assert result["status"] == STATUS_MANUAL_REVIEW and result["allowed"] is False
+    assert result["detected_attributes"] == ["проект", "срок_исполнения"]
+    assert result["attribute_quotes"] == {"проект": "проекта «Маяк»"}
+    assert any("срок_исполнения" in note and "цитатой" in note for note in result["notes"])
+
+
+def test_confirmed_quotes_are_returned_with_allowed_goal(monkeypatch):
+    monkeypatch.setattr(agent, "get_check_targets", lambda: TARGETS)
+    monkeypatch.setattr(agent, "find_violations", lambda attrs, dept=None: [])
+    monkeypatch.setattr(agent, "get_client", lambda: _FakeClient(
+        '{"attributes": [{"name": "проект", "quote": "проекта «Маяк»"}]}'))
+    result = check_goal(GOAL)
+    assert result["status"] == STATUS_ALLOWED
+    assert result["attribute_quotes"] == {"проект": "проекта «Маяк»"}
 
 
 def test_json_mode_turns_off_when_server_rejects_schema(monkeypatch):

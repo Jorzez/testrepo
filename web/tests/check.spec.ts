@@ -11,6 +11,8 @@ test("ответ проверки объясняет, что не так и ка
   await expect(violation).toContainText("Приказ ПР-01, пункт 1.1");
   await expect(violation).toContainText("Как исправить:");
   await expect(violation).toContainText("Пример: «В рамках проекта «Альфа»");
+  // Найденный атрибут подтверждён цитатой из цели.
+  await expect(result.locator(".quote")).toHaveText("«31.12.2025»");
 
   // Результат не теряется при переходе между разделами.
   await go(app, "Атрибуты");
